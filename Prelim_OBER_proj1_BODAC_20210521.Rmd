@@ -28,6 +28,15 @@ if (!requireNamespace("devtools", quietly= TRUE)){install.packages("openxlsx")}
 
 ```
 
+```{r project organization, message=F, echo=T, eval=T, warning=T, include=F, cache=T}
+
+# create directories
+if(!dir.exists("./figures")){dir.create("./figures")}
+if(!dir.exists("./output_data")){dir.create("./output_data")} 
+
+```
+
+
 ```{r library loading, message=F, echo=T, eval=T, warning=T, include=F, cache=F}
 ## load required packages
 library(phyloseq)
@@ -49,10 +58,10 @@ library(cowplot)
 ```{r import data, message=F, echo=T, eval=T, warning=T, include=F, cache=F}
 
 #creating phyloseq objects with 
-physeq<-qza_to_phyloseq(features = "OBER_Q12946_16S_515F926R_20201113_table.qza",
-                        tree = "OBER_Q12946_16S_515F926R_20201113_rooted-tree.qza",
-                        taxonomy = "OBER_Q12946_16S_515F926R_20201113_taxonomy_NB_classifier_SILVA_132_99_16S_515F-926R_QIIME2-2019.10.qza",
-                        metadata = "OBER_Q12946_16S_515F926R_20201113@metadata_complete.txt")
+physeq<-qza_to_phyloseq(features = "input_data/OBER_Q12946_16S_515F926R_20201113_table.qza",
+                        tree = "input_data/OBER_Q12946_16S_515F926R_20201113_rooted-tree.qza",
+                        taxonomy = "input_data/OBER_Q12946_16S_515F926R_20201113_taxonomy_NB_classifier_SILVA_132_99_16S_515F-926R_QIIME2-2019.10.qza",
+                        metadata = "input_data/OBER_Q12946_16S_515F926R_20201113@metadata_complete.txt")
 
 colnames(sample_data(physeq))
 sample_data(physeq)$combined <- factor(paste0(sample_data(physeq)$Filter_type, "-", sample_data(physeq)$Sample_type, "-", sample_data(physeq)$Time))
@@ -154,7 +163,7 @@ psdata_OBER <- physeq2
 #### Analysis of DNA concentrations
 ```{r DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
 
-dna_data <- read.table("OBER_DNA_conc_data.txt", header = T, sep = "\t", dec = ".") %>% as_tibble()
+dna_data <- read.table("input_data/OBER_DNA_conc_data.txt", header = T, sep = "\t", dec = ".") %>% as_tibble()
 metadata_ps <- data.frame(sample_data(psdata_OBER)) %>% rownames_to_column(var = "SampleID") %>% as_tibble()
 metadata_dna <- inner_join(dna_data, metadata_ps, by = "SampleID")
 
@@ -288,7 +297,9 @@ metadata$Time <- as.factor(metadata$Time)
 metadata$Protocol <- as.factor(metadata$Protocol)
 
 # alpha rarefaction curve
-source("amp_rarecurve.r")
+source("scripts/ampvis2_internals.r")
+source("scripts/amp_rankabundance.r")
+source("scripts/amp_rarecurve.r")
 
 amp_rarecurve(psdata_OBER_unfiltered, color = "combined", legend.position = "bottomright")
 amp_rarecurve(psdata_OBER, color = "combined", legend.position = "bottomright")
@@ -323,7 +334,7 @@ Shannon <- alpha %>%
         legend.position = "bottom")
 
 alpha_div = plot_grid(Chao1, Shannon, labels  = c("A", "B"), ncol = 2)
-ggsave(alpha_div, filename = "plot_alpha_div_OBER.pdf", width = 8, height = 6)
+ggsave(alpha_div, filename = "figures/plot_alpha_div_OBER.pdf", width = 8, height = 6)
 
 ```
 
@@ -470,9 +481,9 @@ plot_PCoA_wu <- plot_ordination(physeq = psdata_OBER_rel,
                                 ordination = PCoA_wu, 
                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac")
 
-#pdf("plot_beta_diversity_OBER_proj1_BODAC.pdf", useDingbats = F, width = 12, height = 7)
+pdf("figures/plot_beta_diversity_OBER_proj1_BODAC.pdf", useDingbats = F, width = 12, height = 7)
 gridExtra::grid.arrange(plot_PCoA_Jac, plot_PCoA_BC, plot_PCoA_uu, plot_PCoA_wu, nrow=4, ncol=1)
-#dev.off()
+dev.off()
 
 ```
 
@@ -558,9 +569,9 @@ plot_PCoA_wu_noH2O <- plot_ordination(physeq = psdata_OBER_rel_noH2O,
                                 ordination = PCoA_wu_noH2O, 
                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac - Granules only")
 
-#pdf("plot_beta_diversity_OBER_proj1_BODAC_Granules_only.pdf", useDingbats = F, width = 7, height = 12)
+pdf("figures/plot_beta_diversity_OBER_proj1_BODAC_Granules_only.pdf", useDingbats = F, width = 7, height = 12)
 gridExtra::grid.arrange(plot_PCoA_Jac_noH2O, plot_PCoA_BC_noH2O, plot_PCoA_uu_noH2O, plot_PCoA_wu_noH2O, nrow=4, ncol=1)
-#dev.off()
+dev.off()
 
 ```
 
@@ -611,7 +622,7 @@ adonis_wu_noH2O
 ```{r venn diagram, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=14, fig.width=7}
 
 # from https://rdrr.io/github/Russel88/MicEco/man/ps_venn.html
-source("ps_venn.r")
+source("scripts/ps_venn.r")
 
 psdata_OBER_rel_noPolFilAftBackw <- subset_samples(psdata_OBER_rel, combined != "Polishing_filter-Granules-After")
 psdata_OBER_rel_0.01 <- prune_taxa(taxa_sums(psdata_OBER_rel) > 0.0001, psdata_OBER_rel)
@@ -633,7 +644,7 @@ ntaxa(psdata_OBER_rel_noPolFilAftBackw_0.5)
 
 
 # plot rankabundance
-source("amp_rankabundance.r")
+source("scripts/amp_rankabundance.r")
 #devtools::source_gist("8d0ca4206a66be7ff6d76fc4ab8e66c6")
 
 # #go convert --> STILL TO WORK ON
@@ -696,9 +707,9 @@ ps_venn(ps = ps_granule_polish,
         relative = F,
         plot = T)
 
-#pdf("plot_venn_diagram_OBER_proj1_BODAC_Protocols_none_0.001_0.01_0.5pct.pdf", useDingbats = F, width = 7, height = 13)
+pdf("figures/plot_venn_diagram_OBER_proj1_BODAC_Protocols_none_0.001_0.01_0.5pct.pdf", useDingbats = F, width = 7, height = 13)
 gridExtra::grid.arrange(venn_count_0.01_Time_pre, venn_count_0.01_Time_polish, nrow=2, ncol=1)
-#dev.off()   
+dev.off()   
 
 ```
 
@@ -843,7 +854,7 @@ ggplot(aes(x=Sample, y = rel_abund, fill = Genus)) +
         strip.placement = "outside",
         legend.position = "bottom")
 
-ggsave("OBER_stacked_barplot_Genus.pdf", width = 5, height = 4, units = "in") 
+ggsave("figures/OBER_stacked_barplot_Genus.pdf", width = 5, height = 4, units = "in") 
 
 ```
 
