@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
 ```
 
 ## R Markdown
@@ -161,9 +162,9 @@ psdata_OBER <- physeq2
 ```
 
 #### Analysis of DNA concentrations
-```{r DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+```{r DNA concentration and purity data import, message=F, echo=F, eval=T, warning=F, include=, cache=F}
 
-dna_data <- read.table("input_data/OBER_DNA_conc_data.txt", header = T, sep = "\t", dec = ".") %>% as_tibble()
+dna_data <- read.table("input_data/OBER_DNA_conc_purity_data.txt", header = T, sep = "\t", dec = ".") %>% as_tibble()
 metadata_ps <- data.frame(sample_data(psdata_OBER)) %>% rownames_to_column(var = "SampleID") %>% as_tibble()
 metadata_dna <- inner_join(dna_data, metadata_ps, by = "SampleID")
 
@@ -178,11 +179,33 @@ metadata_dna <- inner_join(dna_data, metadata_ps, by = "SampleID")
 #   theme(axis.text.x = element_text(angle = 90, hjust = 0))
 #   theme(axis.text.x = element_text(angle = 90, hjust = 0))
 
+# reshape metadata
+metadata_dna = 
 metadata_dna %>% 
-  pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
+  pivot_longer(c(unpurified, purified), 
+               names_to = "Purification", 
+               values_to = "DNA_conc_ng_ul") %>% 
+  pivot_longer(c(unpurified_260_280, unpurified_260_230, purified_260_280, purified_260_230), 
+               names_to = "group_purification", 
+               values_to = "Absorbance_ratio") %>% 
+  #select(SampleID, Purification, DNA_conc_ng_ul, group_purification, Absorbance_ratio) %>% 
+  separate(col = group_purification, sep = "_", into = c("purif_state","waves_1","waves_2")) %>% 
+  mutate(waves = paste0(waves_1, "_", waves_2)) %>% select(-waves_1, -waves_2) %>% 
+  filter(Purification == purif_state)
+
+```
+
+#### Analysis of DNA concentrations
+
+```{r plot and stats DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+# plot DNA concentration unpurified only
+metadata_dna %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
   filter(Purification == "unpurified") %>% 
+  select(SampleID, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
   ggplot(aes(x = Protocol, y = dna_amount_ng, color = Protocol)) +
   geom_point(position = position_jitterdodge(0.2), show.legend = F) +
   stat_summary(fun = median, pch = 21) +
@@ -192,50 +215,54 @@ metadata_dna %>%
   #theme(legend.position = "bottom") +
   ggtitle("DNA yield before purification")
 
+# plot DNA concentration purified only
 metadata_dna %>% 
-  pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
   filter(Purification == "purified") %>% 
+  select(SampleID, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
   ggplot(aes(x = Protocol, y = dna_amount_ng, color = Protocol)) +
-  geom_point(position = position_jitterdodge(0.3)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
   stat_summary(fun = median, pch = 21) +
   facet_grid(~Sample_type + Filter_type) +
-  labs(y = "DNA yield (ng)", x = NULL) +
   theme_classic() +
+  labs(y = "DNA yield (ng)", x = NULL) +
   #theme(legend.position = "bottom") +
   ggtitle("DNA yield after purification")
 
-# # tabulate loss
-# metadata_dna %>% 
-#   mutate(loss_ng = (purified*20)-(unpurified*30)) %>% 
-#   group_by(Protocol, Sample_type, Filter_type) %>% 
-#   summarize(median_hilow(loss_ng))
-# 
-# # plot loss
-# metadata_dna %>% 
-#   mutate(loss_ng = (purified*20)-(unpurified*30)) %>% 
-#   ggplot(aes(y = loss_ng, x = Protocol, color = Sample_type)) +
-#   geom_point() +
-#   facet_wrap(~Filter_type) +
-#   theme_classic()
+# tabulate loss
+metadata_dna %>%
+  mutate(loss_ng = (purified*20)-(unpurified*30)) %>%
+  group_by(Protocol, Sample_type, Filter_type) %>%
+  summarize(median_hilow(loss_ng))
+
+# plot loss
+metadata_dna %>%
+  mutate(loss_ng = (purified*20)-(unpurified*30)) %>%
+  ggplot(aes(y = loss_ng, x = Protocol, color = Sample_type)) +
+  geom_point() +
+  facet_wrap(~Filter_type) +
+  theme_classic()
 
 # statistics
 # unpurified
 # water only
 metadata_dna %>% 
-  pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
   filter(Purification == "unpurified",
          Sample_type == "Water") %>% 
   with(kruskal.test(dna_amount_ng ~ Protocol)) 
 
 # granules
 metadata_dna %>% 
-  pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
   filter(Purification == "unpurified",
          Sample_type == "Granules") %>% 
   with(kruskal.test(dna_amount_ng ~ Protocol)) 
@@ -243,18 +270,20 @@ metadata_dna %>%
 #purified
 # water only
 metadata_dna %>% 
-  pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
   filter(Purification == "purified",
          Sample_type == "Water") %>% 
   with(kruskal.test(dna_amount_ng ~ Protocol)) 
 
 # granules only
 metadata_dna %>% 
-  pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
   filter(Purification == "purified",
          Sample_type == "Granules") %>% 
   with(kruskal.test(dna_amount_ng ~ Protocol)) 
