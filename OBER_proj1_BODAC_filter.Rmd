@@ -1,0 +1,977 @@
+---
+title: "OBER project BODAC filters and water"
+author: "Pieter van Veelen"
+date: "5/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+```
+
+## R Markdown
+
+Analysis of microbial communities in BODAC filters and backwash water. Evaluate the effects of different DNA extraction methods. Pre-filters and polishing filters are referred to as BODAC1 and BODAC2, respectively, in the manuscript text and in figures (adjusted using Illustrator pre-submission).
+
+### Set parameters and import data
+```{r library install, message=F, echo=T, eval=T, warning=T, include=F, cache=T}
+
+# install packages
+library(devtools)
+#install.packages("data.table", type = "binary")
+if (!requireNamespace("devtools", quietly= TRUE)){install.packages("devtools")}
+devtools::install_github("jbisanz/qiime2R")
+if (!requireNamespace("devtools", quietly= TRUE)){install.packages("tidyverse")}
+if (!requireNamespace("devtools", quietly= TRUE)){install.packages("openxlsx")}
+#devtools::install_github("adw96/breakaway") 
+#devtools::install_github("adw96/DivNet")
+
+```
+
+```{r project organization, message=F, echo=T, eval=T, warning=T, include=F, cache=T}
+
+# create directories
+if(!dir.exists("./figures")){dir.create("./figures")}
+if(!dir.exists("./output_data")){dir.create("./output_data")} 
+
+```
+
+
+```{r library loading, message=F, echo=T, eval=T, warning=T, include=F, cache=F}
+## load required packages
+library(phyloseq)
+library(qiime2R)
+library(tidyverse)
+library(magrittr)
+library(devtools)
+library(qiime2R)
+library(here)
+library(breakaway)
+library(DivNet)
+library(openxlsx)
+library(ape)
+library(vegan)
+library(ggtext)
+library(cowplot)
+```
+
+```{r import data, message=F, echo=T, eval=T, warning=T, include=F, cache=F}
+
+#creating phyloseq objects with 
+physeq<-qza_to_phyloseq(features = "input_data/OBER_Q12946_16S_515F926R_20201113_table.qza",
+                        tree = "input_data/OBER_Q12946_16S_515F926R_20201113_rooted-tree.qza",
+                        taxonomy = "input_data/OBER_Q12946_16S_515F926R_20201113_taxonomy_NB_classifier_SILVA_132_99_16S_515F-926R_QIIME2-2019.10.qza",
+                        metadata = "input_data/OBER_Q12946_16S_515F926R_20201113@metadata_complete.txt")
+
+colnames(sample_data(physeq))
+sample_data(physeq)$combined <- factor(paste0(sample_data(physeq)$Filter_type, "-", sample_data(physeq)$Sample_type, "-", sample_data(physeq)$Time))
+```
+
+```{r clean phylogeny, message=F, echo=F, eval=T, warning=T, include=F, cache=F}
+### resolve phylogenetic tree ###
+
+# evaluate tree topology
+is.binary.tree(phy_tree(physeq)) # if FALSE --> polychotomy present (node has more than 2 tips)
+#TRUE
+
+# if FALSE:
+# resolve polychotomous nodes
+phy_tree_resolved <- multi2di(phy_tree(physeq))
+is.binary.tree(phy_tree_resolved)
+# create new phy_tree
+tree2 <- phy_tree_resolved
+
+# subset_taxa(phy_tree_resolved, Kingdom ==  "Bacteria")
+
+# merge new phy_tree object with sample_data and otu_table into new phyloseq object
+psdata_OBER <- merge_phyloseq(otu_table(physeq), sample_data(physeq), tax_table(physeq), tree2)
+rank_names(psdata_OBER)
+```
+
+#### cleaning taxonomy
+```{r clean taxanomy, message=F, echo=F, eval=T, warning=T, include=F, cache=F}
+### remove Archaea, Chloroplast and Mitochondia and unassigned Kingdom
+#View(tax_table(psdata_OBER)@.Data) # no of the groups below present (21 ASVs in total)
+#physeq1 <- subset_taxa(psdata_OBER, Kingdom == "D_0__Bacteria") # retain Archaea
+#physeq2 <- subset_taxa(psdata_OBER, Phylum == "Chloroplast") # none found
+#physeq3 <- subset_taxa(psdata_OBER, Class == "Chloroplast") # none found
+physeq1 <- subset_taxa(psdata_OBER, Order != "Chloroplast") # dropped 3 ASVs
+physeq2 <- subset_taxa(physeq1, Family != "Mitochondria") # dropped 191 ASVs
+
+## clean taxonomy tags with no information
+# specify NA taxon name tags to last known taxon names
+tax.clean <- data.frame(tax_table(physeq2))
+#tax.clean <- data.frame(tax.clean)
+mode(tax.clean)
+str(tax.clean)
+
+
+# change tags into characters
+tax.clean2 <- tax.clean
+tax.clean2$Kingdom <- as.character(tax.clean2$Kingdom)
+tax.clean2$Phylum <- as.character(tax.clean2$Phylum)
+tax.clean2$Class <- as.character(tax.clean2$Class)
+tax.clean2$Order <- as.character(tax.clean2$Order)
+tax.clean2$Family <- as.character(tax.clean2$Family)
+tax.clean2$Genus <- as.character(tax.clean2$Genus)
+tax.clean2$Species <- as.character(tax.clean2$Species)
+str(tax.clean2)
+
+
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "Ambiguous_taxa", "")))
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "metagenome", "")))
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "uncultured archeaon", "")))
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "uncultured bacterium", "")))
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "uncultured sludge bacterium", "")))
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "Unclassified bacterium", "")))
+tax.clean = tax.clean %>% mutate_all(funs(str_replace(., "unclassified bacterium", "")))
+tax.clean[is.na(tax.clean)] <- ""
+
+
+# function replace name tags from [https://github.com/joey711/phyloseq/issues/850]
+for (i in 1:nrow(tax.clean)){
+  if (tax.clean[i,2] == ""){
+    Kingdom <- paste("Kingdom_", tax.clean[i,1], sep = "")
+    tax.clean[i, 2:7] <- Kingdom
+  } else if (tax.clean[i,3] == ""){
+    Phylum <- paste("Phylum_", tax.clean[i,2], sep = "")
+    tax.clean[i, 3:7] <- Phylum
+  } else if (tax.clean[i,4] == ""){
+    Class <- paste("Class_", tax.clean[i,3], sep = "")
+    tax.clean[i, 4:7] <- Class
+  } else if (tax.clean[i,5] == ""){
+    Order <- paste("Order_", tax.clean[i,4], sep = "")
+    tax.clean[i, 5:7] <- Order
+  } else if (tax.clean[i,6] == ""){
+    Family <- paste("Family_", tax.clean[i,5], sep = "")
+    tax.clean[i, 6:7] <- Family
+  } else if (tax.clean[i,7] == ""){
+    tax.clean$Species[i] <- paste("Genus_",tax.clean$Genus[i], sep = "_")
+  }
+}
+
+psdata_newTaxtab <- psdata_OBER
+tax_table(psdata_newTaxtab) <- as.matrix(tax.clean)
+tax_table(psdata_newTaxtab)
+
+# put cleaned tax_table into phyloseq object
+tax_table(physeq2) <- as.matrix(tax.clean)
+
+psdata_OBER <- physeq2
+
+```
+
+#### Analysis of DNA concentrations
+```{r DNA concentration and purity data import, message=F, echo=F, eval=T, warning=F, include=, cache=F}
+
+dna_data <- read.table("input_data/OBER_DNA_conc_purity_data.txt", header = T, sep = "\t", dec = ".") %>% as_tibble()
+metadata_ps <- data.frame(sample_data(psdata_OBER)) %>% rownames_to_column(var = "SampleID") %>% as_tibble()
+metadata_dna <- inner_join(dna_data, metadata_ps, by = "SampleID")
+
+# metadata_dna %>% 
+#   pivot_longer(c(unpurified, purified), names_to = "Purification", values_to = "DNA_conc_ng_ul") %>% 
+#   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+#                                 DNA_conc_ng_ul*20)) %>% 
+#   ggplot(aes(x = combined, y = dna_amount_ng)) +
+#   geom_point(aes(color = Protocol), position = position_jitterdodge(0.2), pch=21) +
+#   facet_wrap(~Purification + Filter_type) +
+#   theme_classic() +
+#   theme(axis.text.x = element_text(angle = 90, hjust = 0))
+#   theme(axis.text.x = element_text(angle = 90, hjust = 0))
+
+# reshape metadata
+metadata_dna = 
+metadata_dna %>% 
+  pivot_longer(c(unpurified, purified), 
+               names_to = "Purification", 
+               values_to = "DNA_conc_ng_ul") %>% 
+  pivot_longer(c(unpurified_260_280, unpurified_260_230, purified_260_280, purified_260_230), 
+               names_to = "group_purification", 
+               values_to = "Absorbance_ratio") %>% 
+  #select(SampleID, Purification, DNA_conc_ng_ul, group_purification, Absorbance_ratio) %>% 
+  separate(col = group_purification, sep = "_", into = c("purif_state","waves_1","waves_2")) %>% 
+  mutate(waves = paste0("absorb_", waves_1, "_", waves_2)) %>% select(-waves_1, -waves_2)
+
+```
+
+
+
+```{r plot and stats DNA purity, message=F, echo=T, eval=T, warning=F, include=T, cache=F}
+
+purity_A =
+metadata_dna %>% 
+  filter(Purification == purif_state,
+         waves == "absorb_260_230") %>% 
+  #pivot_wider(names_from = waves, values_from = Absorbance_ratio)
+  filter(Purification == "unpurified") %>% 
+  ggplot(aes(x = Protocol, y = Absorbance_ratio, color = Protocol)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
+  stat_summary(fun = median, pch = 21) +
+  facet_grid(~Sample_type + Filter_type) +
+  theme_classic() +
+  labs(y = "Abs 260/230 nm \nUnpurified", x = NULL) +
+  #theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 90, hjust=1))
+  ggtitle("DNA purity before purification 260/230")
+
+purity_B =
+  metadata_dna %>% 
+  filter(Purification == purif_state,
+         waves == "absorb_260_230") %>% 
+  #pivot_wider(names_from = waves, values_from = Absorbance_ratio)
+  filter(Purification == "purified") %>% 
+  ggplot(aes(x = Protocol, y = Absorbance_ratio, color = Protocol)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
+  stat_summary(fun = median, pch = 21) +
+  facet_grid(~Sample_type + Filter_type) +
+  theme_classic() +
+  labs(y = "Abs 260/230 nm \nPurified", x = NULL) +
+  #theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 90, hjust=1))
+  ggtitle("DNA purity after purification 260/230")
+  
+  purity_C =
+metadata_dna %>% 
+  filter(Purification == purif_state,
+         waves == "absorb_260_280") %>% 
+  #pivot_wider(names_from = waves, values_from = Absorbance_ratio)
+  filter(Purification == "purified") %>% 
+  ggplot(aes(x = Protocol, y = Absorbance_ratio, color = Protocol)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
+  stat_summary(fun = median, pch = 21) +
+  facet_grid(~Sample_type + Filter_type) +
+  theme_classic() +
+  labs(y = "Abs 260/280 nm \nUnpurified", x = NULL) +
+  #theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 90, hjust=1))
+  ggtitle("DNA purity before purification 260/280")
+
+purity_D =
+  metadata_dna %>% 
+  filter(Purification == purif_state,
+         waves == "absorb_260_280") %>% 
+  #pivot_wider(names_from = waves, values_from = Absorbance_ratio)
+  filter(Purification == "purified") %>% 
+  ggplot(aes(x = Protocol, y = Absorbance_ratio, color = Protocol)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
+  stat_summary(fun = median, pch = 21) +
+  facet_grid(~Sample_type + Filter_type) +
+  theme_classic() +
+  labs(y = "Abs 260/280 nm \nPurified", x = NULL) +
+  #theme(legend.position = "bottom") +
+  theme(axis.text.x = element_text(angle = 90, hjust=1))
+  ggtitle("DNA purity after purification 260/280")
+  
+purity_plots = plot_grid(purity_A, 
+                         purity_B, 
+                         purity_C, 
+                         purity_D, 
+                         labels  = c("A", "B", "C", "D"), 
+                         nrow = 2, 
+                         ncol = 2,
+                         align = "hv")  
+  
+purity_plots 
+ 
+```
+
+#### Analysis of DNA concentrations
+```{r plot and stats DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+# plot DNA concentration unpurified only
+metadata_dna %>% 
+  mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+                                DNA_conc_ng_ul*20)) %>% 
+  filter(Purification == "unpurified") %>% 
+  select(SampleID, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
+  ggplot(aes(x = Protocol, y = dna_amount_ng, color = Protocol)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
+  stat_summary(fun = median, pch = 21) +
+  facet_grid(~Sample_type + Filter_type) +
+  theme_classic() +
+  labs(y = "DNA yield (ng)", x = NULL) +
+  #theme(legend.position = "bottom") +
+  ggtitle("DNA yield before purification")
+
+# plot DNA concentration purified only
+metadata_dna %>% 
+  mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+                                DNA_conc_ng_ul*20)) %>% 
+  filter(Purification == "purified") %>% 
+  select(SampleID, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
+  ggplot(aes(x = Protocol, y = dna_amount_ng, color = Protocol)) +
+  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
+  stat_summary(fun = median, pch = 21) +
+  facet_grid(~Sample_type + Filter_type) +
+  theme_classic() +
+  labs(y = "DNA yield (ng)", x = NULL) +
+  #theme(legend.position = "bottom") +
+  ggtitle("DNA yield after purification")
+
+# tabulate loss
+metadata_dna %>%
+  mutate(loss_ng = (purified*20)-(unpurified*30)) %>%
+  group_by(Protocol, Sample_type, Filter_type) %>%
+  summarize(median_hilow(loss_ng))
+
+# plot loss
+metadata_dna %>%
+  mutate(loss_ng = (purified*20)-(unpurified*30)) %>%
+  ggplot(aes(y = loss_ng, x = Protocol, color = Sample_type)) +
+  geom_point() +
+  facet_wrap(~Filter_type) +
+  theme_classic()
+
+# statistics
+# unpurified
+# water only
+metadata_dna %>% 
+  mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+                                DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
+  filter(Purification == "unpurified",
+         Sample_type == "Water") %>% 
+  with(kruskal.test(dna_amount_ng ~ Protocol)) 
+
+# granules
+metadata_dna %>% 
+  mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+                                DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
+  filter(Purification == "unpurified",
+         Sample_type == "Granules") %>% 
+  with(kruskal.test(dna_amount_ng ~ Protocol)) 
+
+#purified
+# water only
+metadata_dna %>% 
+  mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+                                DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
+  filter(Purification == "purified",
+         Sample_type == "Water") %>% 
+  with(kruskal.test(dna_amount_ng ~ Protocol)) 
+
+# granules only
+metadata_dna %>% 
+  mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
+                                DNA_conc_ng_ul*20)) %>% 
+  select(SampleID, Purification, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
+  distinct() %>% 
+  filter(Purification == "purified",
+         Sample_type == "Granules") %>% 
+  with(kruskal.test(dna_amount_ng ~ Protocol)) 
+
+```
+```{r DNA purity ratios nanodrop, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+### read in new purity data by OBER
+# Test for differences in purity between purified and unpurified samples stratified by granules and water, and without blanks.
+
+
+```
+
+
+
+#### calculate rarefaction curves using amp_rarecurve.r
+```{r rarefaction curves, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+# full dataset
+psdata_OBER
+psdata_OBER <- subset_samples(psdata_OBER, Filter_type != "Blank")
+
+# average and variation in coverage
+mean(sample_sums(psdata_OBER)) # = 69797.76
+summary(sample_sums(psdata_OBER))
+sum(sample_sums(psdata_OBER))
+
+sample_sums(subset_samples(physeq2, Filter_type == "Blank"))
+
+# relative abundance data
+psdata_OBER_rel <- transform_sample_counts(psdata_OBER, fun = function(x) x/sum(x)) # 3009 taxa (100% abundance)
+
+# abundance filter at (0.01%, 0.1% 0.5%)
+psdata_OBER_0.01pct <- prune_taxa(taxa_sums(psdata_OBER_rel) > 0.0001, psdata_OBER) #2610 (99.94% abundance)
+psdata_OBER_0.1pct <- prune_taxa(taxa_sums(psdata_OBER_rel) > 0.001, psdata_OBER) #1615 (98.73% abundance)
+psdata_OBER_0.5pct <- prune_taxa(taxa_sums(psdata_OBER_rel) > 0.005, psdata_OBER) #2610 (93.07% abundance)
+
+### choice to continue downstream analysis with abundance filter that retains ASVs with at least 0.1% of total read abundance.
+psdata_OBER_unfiltered <- psdata_OBER # save unfiltered data
+psdata_OBER <- psdata_OBER_0.1pct # overwrite psdata_OBER for abundance filtered data
+
+# reformat metadata
+metadata <- data.frame(sample_data(psdata_OBER), stringsAsFactors = T)
+metadata$Sample_type <- as.factor(metadata$Sample_type)
+metadata$Filter_type <- as.factor(metadata$Filter_type)
+metadata$Time <- as.factor(metadata$Time)
+metadata$Protocol <- as.factor(metadata$Protocol)
+
+# alpha rarefaction curve
+source("scripts/ampvis2_internals.r")
+source("scripts/amp_rankabundance.r")
+source("scripts/amp_rarecurve.r")
+
+amp_rarecurve(psdata_OBER_unfiltered, color = "combined", legend.position = "bottomright")
+amp_rarecurve(psdata_OBER, color = "combined", legend.position = "bottomright")
+amp_rarecurve(psdata_OBER, color = "Protocol", legend.position = "bottomright")
+
+# calculate richness
+alpha <- estimate_richness(psdata_OBER, measures = c("Chao1", "Shannon"))
+alpha$sampleID <- row.names(alpha)
+metadata$sampleID <- sample_names(psdata_OBER)
+alpha <- left_join(metadata, alpha, by = "sampleID")
+Chao1 <- alpha %>% 
+  ggplot(aes(x=combined, y=Chao1, color = combined, shape = Protocol)) +
+  geom_jitter(aes(group = Protocol), position = position_dodge(0.3), show.legend = T) +
+  #geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0)) +
+  theme(legend.text = element_markdown(),
+        legend.key.size = unit(7, "pt"),
+        axis.ticks.x = element_blank(), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        legend.position = "bottom")
+Shannon <- alpha %>% 
+  ggplot(aes(x=combined, y=Shannon, color = combined, shape = Protocol)) +
+  geom_jitter(aes(group = Protocol), position = position_dodge(0.3), show.legend = T) +
+  #geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 0)) +
+  theme(legend.text = element_markdown(),
+        legend.key.size = unit(7, "pt"),
+        axis.ticks.x = element_blank(), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        legend.position = "bottom")
+
+alpha_div = plot_grid(Chao1, Shannon, labels  = c("A", "B"), ncol = 2)
+ggsave(alpha_div, filename = "figures/plot_alpha_div_OBER.pdf", width = 8, height = 6)
+
+```
+
+#### calculate alpha diversity using Breakaway and DivNet
+```{r, eval=F, echo=F, include=T}
+
+# follow: https://adw96.github.io/breakaway/articles/diversity-hypothesis-testing.html
+# https://adw96.github.io/breakaway/reference/index.html
+# divnet <-  divnet(tax_glom(psdata_OBER, "Genus"),
+#                           X = "combined",
+#                           ncores = 6) #the number of cores used to run  
+#  divnet
+#  divnet$shannon
+#  divnet_stats <- testDiversity(divnet, "shannon")
+# plot(divnet)
+# estimates <- divnet$shannon %>% summary %$% estimate
+# ses<- sqrt(divnet$`shannon-variance`)
+# X<-breakaway::make_design_matrix(psdata_OBER, variables = c("combined"))
+# betta(estimates, ses, X)$table
+ 
+### Run Breakaway ### to estimate ASV richness
+ 
+ba <- breakaway(psdata_OBER)
+ba_unf <- breakaway(psdata_OBER_unfiltered)
+
+# Plot estimates
+plot(ba, psdata_OBER, color = "combined")
+plot(ba_unf, psdata_OBER_unfiltered, color = "combined") # check if unfiltered data would yield higher uncertainty around estimates
+
+# Take the estimates and turn them into a data frame
+summary_df <- as.data.frame(summary(ba) %>% 
+  add_column("sampleID" = psdata_OBER %>% otu_table %>% sample_names) %>% 
+  add_column("combined" =  psdata_OBER %>% sample_data %>% .[,"combined"] %>% as.matrix(.) %>% .[,1] %>% unname(.)) %>% 
+  add_column("Protocol" =  psdata_OBER %>% sample_data %>% .[,"Protocol"] %>% as.matrix(.) %>% .[,1] %>% unname(.)))
+
+summary_df %>% 
+ggplot(aes(y = estimate, x = combined, color = combined, shape = Protocol)) + 
+  #geom_boxplot(aes(fill=NULL)) + 
+  geom_point(aes(group = Protocol), position = position_dodge(0.3)) +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ylab("Breakaway \nASV richness estimate")
+ 
+# Let's test the hypothesis that different populations have the same microbial diversity
+# betta() works like a regression model but it accounts for the uncertainty in estimating diversity
+bt_prot <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Protocol"))
+bt_prot
+
+# Betta modelling (R2 = 0.13) of breakaway richness estimates indicates that CTAB DNA extraction increases richness across all samples compared with FastDNA Spin kit (94 species more; estimated total = 843 ASVs; p < 0.001).
+
+bt_ft <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Filter_type"))
+bt_ft
+
+bt <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Sample_type"))
+bt
+
+#bt <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Time"))
+#bt
+
+# Run betta on combined for each Protocol set separately
+psdata_OBER_CTAB <- prune_taxa(taxa_sums(subset_samples(psdata_OBER, Protocol == "CTAB_method")) > 0, subset_samples(psdata_OBER, Protocol == "CTAB_method"))
+psdata_OBER_FS <- prune_taxa(taxa_sums(subset_samples(psdata_OBER, Protocol == "Fast_DNA")) > 0, subset_samples(psdata_OBER, Protocol == "Fast_DNA"))
+
+psdata_OBER_FS <- prune_taxa(taxa_sums(subset_samples(psdata_OBER_FS, combined != "Polishing_filter-Granules-After"))>0, subset_samples(psdata_OBER_FS, combined != "Polishing_filter-Granules-After"))
+
+ba_CT <- breakaway(psdata_OBER_CTAB)
+ba_FS <- breakaway(psdata_OBER_FS)
+
+bt_CT <- betta(summary(ba_CT)$estimate, summary(ba_CT)$error, make_design_matrix(psdata_OBER_CTAB, "combined"))
+bt_CT
+bt_FS <- betta(summary(ba_FS)$estimate, summary(ba_FS)$error, make_design_matrix(psdata_OBER_FS, "combined"))
+bt_FS
+
+df_CT = bt_CT$table %>% 
+  as.data.frame() 
+  colnames(df_CT)[2] = "Standard_errors"
+  df_CT$group = rownames(df_CT)
+  df_CT$Protocol <- rep("CTAB_method", nrow(df_CT))
+df_CT <-  df_CT %>% 
+    mutate(pred = if_else(group != "(Intercept)", Estimates + Estimates[1], Estimates)) %>% 
+    mutate(group = if_else(group == "(Intercept)", "predictorsPolishing_filter-Granules-Before", group))
+           
+    
+df_FS = bt_FS$table %>% 
+  as.data.frame() 
+  colnames(df_FS)[2] = "Standard_errors"
+  df_FS$group = rownames(df_FS)
+  df_FS$Protocol <- rep("Fast_DNA", nrow(df_FS))
+df_FS <-  df_FS %>% 
+    mutate(pred = if_else(group != "(Intercept)", Estimates + Estimates[1], Estimates)) %>% 
+    mutate(group = if_else(group == "(Intercept)", "predictorsPolishing_filter-Granules-Before", group))
+
+df <- rbind(df_CT, df_FS)
+df %>%   
+  as_tibble() %>% 
+  mutate(group = factor(group)) %>% 
+  ggplot(aes(x=group, y=pred, group = Protocol)) +
+  geom_point(size = 2, aes(color=group, shape = Protocol), position = position_dodge(0.3)) +
+  geom_errorbar(aes(ymin=pred-1.96*Standard_errors, ymax = pred+1.96*Standard_errors, color = group), width = 0.1, position = position_dodge(0.3)) +
+  theme_classic() +
+  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() +
+  labs(y = "Breakaway predicted ASV richness")
+# Betta modelling (R2 = 0.13) of breakaway richness estimates indicates that CTAB DNA extraction increases richness across all samples compared with FastDNA Spin kit (94 species more; estimated total = 843 ASVs; p < 0.001).
+
+alpha_df_comp <- left_join(alpha, summary_df, by = "sampleID")
+
+  ggplot(alpha_df_comp, aes(x=Chao1, y=estimate)) +
+  geom_point(aes(color = combined.y)) +
+  geom_abline() +
+  theme_bw() 
+ 
+cor.test(alpha_df_comp$estimate, alpha_df_comp$Chao1)
+# with abundance filtered data Chao1 and Breakaway total ASV richness estimates are similar. WIthout abundance filter, Chao1 underestimates AVS richness consistently and in a sample-type specific manner.
+```
+
+
+```{r total beta diversity, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=12, fig.width=7}
+
+### Beta diversity analysis first
+# input data  = psdata_OBER
+
+# input is relative abundance table
+# relative abundance data
+psdata_OBER_rel 
+
+# ordination
+PCoA_BC <- ordinate(psdata_OBER_rel, method = "PCoA", distance = "bray")
+PCoA_Jac <- ordinate(psdata_OBER_rel, method = "PCoA", distance = "jaccard")
+PCoA_uu <- ordinate(psdata_OBER_rel, method = "PCoA", distance = "uunifrac")
+PCoA_wu <- ordinate(psdata_OBER_rel, method = "PCoA", distance = "wunifrac")
+
+colnames(sample_data(psdata_OBER_rel))
+plot_PCoA_BC <- plot_ordination(physeq = psdata_OBER_rel, 
+                                ordination = PCoA_BC, 
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("BC")
+plot_PCoA_Jac <- plot_ordination(physeq = psdata_OBER_rel, 
+                                 ordination = PCoA_Jac, 
+                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("Jaccard")
+plot_PCoA_uu <- plot_ordination(physeq = psdata_OBER_rel, 
+                                ordination = PCoA_uu, 
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("unweighted UniFrac")
+plot_PCoA_wu <- plot_ordination(physeq = psdata_OBER_rel, 
+                                ordination = PCoA_wu, 
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac")
+
+pdf("figures/plot_beta_diversity_OBER_proj1_BODAC.pdf", useDingbats = F, width = 12, height = 7)
+gridExtra::grid.arrange(plot_PCoA_Jac, plot_PCoA_BC, plot_PCoA_uu, plot_PCoA_wu, nrow=4, ncol=1)
+dev.off()
+
+```
+
+### Beta diversity Statistics
+```{r total beta diversity stats, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+## 
+# preliminary: needs to include sqrt transformation and wisconsin double standardisation as in plot
+metadata2 <- data.frame(sample_data(subset_samples(psdata_OBER_rel, Filter_type != "Blank")), stringsAsFactors = T)
+
+
+dist_bc <- distance(psdata_OBER_rel , "bray")
+dist_jac <- distance(psdata_OBER_rel, "jaccard", binary=T)
+dist_uu <- distance(psdata_OBER_rel,  "uunifrac")
+dist_wu <- distance(psdata_OBER_rel,  "wunifrac")
+
+# test model assumptions with vegan::betadisper
+
+# create dummy variable that covers all groups
+metadata2$dummy_betadisp <- factor(paste0(metadata2$combined, metadata2$Protocol))
+
+betadisper_jac <- betadisper(dist_jac,metadata2$dummy_betadisp)
+anova(betadisper_jac)
+
+betadisper_bc <- betadisper(dist_bc,metadata2$dummy_betadisp)
+anova(betadisper_bc)                  
+
+betadisper_uu <- betadisper(dist_uu,metadata2$dummy_betadisp)
+anova(betadisper_uu) 
+
+betadisper_wu <- betadisper(dist_wu,metadata2$dummy_betadisp)
+anova(betadisper_wu)
+
+## for all four beta diversity metrics no significant group differences were found in group dispersions (distance to centroid).
+
+# PERMANOVA (permutational multivariate analysis of variance) with the 'adonis' function
+
+adonis_jac <- adonis2(dist_jac ~ Filter_type + Sample_type + Protocol, permutations = 999, data = metadata2, by = "margin")
+adonis_jac
+
+adonis_bc <- adonis2(dist_bc ~ Filter_type + Sample_type + Protocol, permutations = 999, data = metadata2, by = "margin")
+adonis_bc                  
+
+adonis_uu <- adonis2(dist_uu ~ Filter_type + Sample_type + Protocol, permutations = 999, data = metadata2, by = "margin")
+adonis_uu 
+
+adonis_wu <- adonis2(dist_wu ~ Filter_type + Sample_type + Protocol, permutations = 999, data = metadata2, by = "margin")
+adonis_wu
+
+
+```
+
+Preliminary beta diversity analysis showed that DNA extraction protocol does not affect beta diversity estimates. However, backwash water had different microbial communities than granule samples, since sample type explained between 16% and 49% of variation, depending on whether the chosen distance metric takes into account ASV relative abundance and/or phylogenetic relationships. Filter type explains a lot of variation ranging from 18% to 35% of variation, again depending on the beta diversity metric.  All estimates are interpreted from distance-based redundancy analysis with adonis2 function from vegan, estimating marginal effects only (i.e. accounting for all other effects in the model). 
+
+
+#### Effects of backwashing on granule microbial community composition needs subsetting that filters out all water samples.
+
+```{r granule beta diversity, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=12, fig.width=7}
+
+
+## subsetting by removing water samples
+psdata_OBER_rel_noH2O <- subset_samples(psdata_OBER_rel, Filter_type != "Blank" & Sample_type != "Water")
+# preliminary: needs to include sqrt transformation and wisconsin double standardisation as in plot
+metadata2_noH2O <- data.frame(sample_data(psdata_OBER_rel_noH2O), stringsAsFactors = T)
+
+# ordination
+PCoA_BC_noH2O <- ordinate(psdata_OBER_rel_noH2O, method = "PCoA", distance = "bray")
+PCoA_Jac_noH2O <- ordinate(psdata_OBER_rel_noH2O, method = "PCoA", distance = "jaccard")
+PCoA_uu_noH2O <- ordinate(psdata_OBER_rel_noH2O, method = "PCoA", distance = "uunifrac")
+PCoA_wu_noH2O <- ordinate(psdata_OBER_rel_noH2O, method = "PCoA", distance = "wunifrac")
+
+colnames(sample_data(psdata_OBER_rel_noH2O))
+plot_PCoA_BC_noH2O <- plot_ordination(physeq = psdata_OBER_rel_noH2O, 
+                                ordination = PCoA_BC_noH2O, 
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("BC - Granules only")
+plot_PCoA_Jac_noH2O <- plot_ordination(physeq = psdata_OBER_rel_noH2O, 
+                                 ordination = PCoA_Jac_noH2O, 
+                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("Jaccard - Granules only")
+plot_PCoA_uu_noH2O <- plot_ordination(physeq = psdata_OBER_rel_noH2O, 
+                                ordination = PCoA_uu_noH2O, 
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("unweighted UniFrac - Granules only")
+plot_PCoA_wu_noH2O <- plot_ordination(physeq = psdata_OBER_rel_noH2O, 
+                                ordination = PCoA_wu_noH2O, 
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac - Granules only")
+
+pdf("figures/plot_beta_diversity_OBER_proj1_BODAC_Granules_only.pdf", useDingbats = F, width = 7, height = 12)
+gridExtra::grid.arrange(plot_PCoA_Jac_noH2O, plot_PCoA_BC_noH2O, plot_PCoA_uu_noH2O, plot_PCoA_wu_noH2O, nrow=4, ncol=1)
+dev.off()
+
+```
+
+```{r granule beta diversity stats, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+dist_bc_noH2O <- distance(psdata_OBER_rel_noH2O , "bray")
+dist_jac_noH2O <- distance(psdata_OBER_rel_noH2O, "jaccard", binary=T)
+dist_uu_noH2O <- distance(psdata_OBER_rel_noH2O,  "uunifrac")
+dist_wu_noH2O <- distance(psdata_OBER_rel_noH2O,  "wunifrac")
+
+# test model assumptions with vegan::betadisper
+metadata2_noH2O$dummy_betadisp_noH2O <- factor(paste0(metadata2_noH2O$Filter_type, "-",metadata2_noH2O$Time, "-", metadata2_noH2O$Protocol))
+
+betadisper_jac_noH2O <- betadisper(dist_jac_noH2O,metadata2_noH2O$dummy_betadisp_noH2O)
+anova(betadisper_jac_noH2O)
+
+betadisper_bc_noH2O <- betadisper(dist_bc_noH2O,metadata2_noH2O$dummy_betadisp_noH2O)
+anova(betadisper_bc_noH2O)                  
+
+betadisper_uu_noH2O <- betadisper(dist_uu_noH2O,metadata2_noH2O$dummy_betadisp_noH2O)
+anova(betadisper_uu_noH2O) 
+
+betadisper_wu_noH2O <- betadisper(dist_wu_noH2O,metadata2_noH2O$dummy_betadisp_noH2O)
+anova(betadisper_wu_noH2O)
+
+## for all four beta diversity metrics no significant group differences were found in group dispersions (distance to centroid).
+
+# PERMANOVA (permutational multivariate analysis of variance) with the 'adonis' function
+
+adonis_jac_noH2O <- adonis2(dist_jac_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_jac_noH2O
+
+adonis_bc_noH2O <- adonis2(dist_bc_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_bc_noH2O                  
+
+adonis_uu_noH2O <- adonis2(dist_uu_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_uu_noH2O 
+
+adonis_wu_noH2O <- adonis2(dist_wu_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_wu_noH2O
+
+
+```
+
+
+#### Venn diagramm for co-occurrence and co-exclusion patterns
+
+```{r venn diagram, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=14, fig.width=7}
+
+# from https://rdrr.io/github/Russel88/MicEco/man/ps_venn.html
+source("scripts/ps_venn.r")
+
+psdata_OBER_rel_noPolFilAftBackw <- subset_samples(psdata_OBER_rel, combined != "Polishing_filter-Granules-After")
+psdata_OBER_rel_0.01 <- prune_taxa(taxa_sums(psdata_OBER_rel) > 0.0001, psdata_OBER_rel)
+psdata_OBER_rel_noPolFilAftBackw_0.01 <- prune_taxa(taxa_sums(psdata_OBER_rel_noPolFilAftBackw) > 0.0001, psdata_OBER_rel_noPolFilAftBackw)
+psdata_OBER_rel_noPolFilAftBackw_0.1 <- prune_taxa(taxa_sums(psdata_OBER_rel_noPolFilAftBackw) > 0.001, psdata_OBER_rel_noPolFilAftBackw)
+psdata_OBER_rel_noPolFilAftBackw_0.5 <- prune_taxa(taxa_sums(psdata_OBER_rel_noPolFilAftBackw) > 0.005, psdata_OBER_rel_noPolFilAftBackw)
+
+mean(sample_sums(psdata_OBER_rel_noPolFilAftBackw))
+mean(sample_sums(psdata_OBER_rel_noPolFilAftBackw_0.01))
+mean(sample_sums(psdata_OBER_rel_noPolFilAftBackw_0.1))
+mean(sample_sums(psdata_OBER_rel_noPolFilAftBackw_0.5))
+
+ntaxa(psdata_OBER_rel_noPolFilAftBackw)
+ntaxa(psdata_OBER_rel_noPolFilAftBackw_0.01)
+ntaxa(psdata_OBER_rel_noPolFilAftBackw_0.1)
+ntaxa(psdata_OBER_rel_noPolFilAftBackw_0.5)
+
+
+
+
+# plot rankabundance
+source("scripts/amp_rankabundance.r")
+#devtools::source_gist("8d0ca4206a66be7ff6d76fc4ab8e66c6")
+
+# #go convert --> STILL TO WORK ON
+# sample_data(psdata_OBER_rel_noPolFilAftBackw)$'Sample ID' <- sample_names(psdata_OBER_rel_noPolFilAftBackw)
+# ncol(sample_data(psdata_OBER_rel_noPolFilAftBackw))
+# colnames(sample_data(psdata_OBER_rel_noPolFilAftBackw))
+# sample_data(psdata_OBER_rel_noPolFilAftBackw)[,c(13, 1:11)]
+# ampvis2_obj <- phyloseq_to_ampvis2(psdata_OBER_rel_noPolFilAftBackw)
+# amp_rankabundance(ampvis2_obj, group_by = "combined", showSD = TRUE, log10_x = F)
+
+
+venn_count_0.01 <-         
+ps_venn(ps = psdata_OBER_rel_noPolFilAftBackw_0.01, 
+        group = 'Protocol', 
+        fraction = 0,
+        weight = F,
+        type = "percent",
+        relative = F,
+        plot = T)
+
+venn_count_0.01_count <-         
+ps_venn(ps = psdata_OBER_rel_noPolFilAftBackw_0.01, 
+        group = 'Protocol', 
+        fraction = 0,
+        weight = F,
+        type = "counts",
+        relative = F,
+        plot = T)
+
+venn_count_0.01_genus <-         
+ps_venn(ps = tax_glom(psdata_OBER_rel_noPolFilAftBackw_0.01, "Genus"), 
+        group = 'Protocol', 
+        fraction = 0,
+        weight = F,
+        type = "percent",
+        relative = F,
+        plot = T)
+
+ps_granule <- subset_samples(psdata_OBER_rel_0.01, Sample_type == "Granules")
+ps_granule_FS <- subset_samples(ps_granule, Protocol == "Fast_DNA")
+ps_granule_pre <- prune_taxa(taxa_sums(subset_samples(ps_granule_FS, Filter_type == "Pre-filter")) > 0, subset_samples(ps_granule_FS, Filter_type == "Pre-filter"))
+ps_granule_polish <-  prune_taxa(taxa_sums(subset_samples(ps_granule_FS, Filter_type == "Polishing_filter")) > 0, subset_samples(ps_granule_FS, Filter_type == "Polishing_filter"))
+                                    
+
+venn_count_0.01_Time_pre <-         
+ps_venn(ps = ps_granule_pre, 
+        group = 'Time', 
+        fraction = 0,
+        weight = F,
+        type = "percent",
+        relative = F,
+        plot = T)
+
+venn_count_0.01_Time_polish <-         
+ps_venn(ps = ps_granule_polish, 
+        group = 'Time', 
+        fraction = 0,
+        weight = F,
+        type = "percent",
+        relative = F,
+        plot = T)
+
+pdf("figures/plot_venn_diagram_OBER_proj1_BODAC_Protocols_none_0.001_0.01_0.5pct.pdf", useDingbats = F, width = 7, height = 13)
+gridExtra::grid.arrange(venn_count_0.01_Time_pre, venn_count_0.01_Time_polish, nrow=2, ncol=1)
+dev.off()   
+
+```
+
+Playing around with taxon abundance thresholds range (0.001, 0.01, 0.1, 0.5, 1 % of total abundance) shows that the CTAB and FastSpin kit protocols detect unique taxa (ASV level) in the rare biosphere (>0.5%). At 1% thresholds, both methods detect the same core community.
+
+
+
+
+```{r rel abund barplot, eval=T, echo=T, message=FALSE, warning=TRUE, cache=FALSE, include=T}
+
+# set colorset
+colorset <- c("darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "lightskyblue", "darkgreen",  "khaki2", "firebrick", "brown1", "darkorange1", "cyan1", "royalblue4", "darksalmon", "darkblue", "royalblue4", "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "brown1", "darkorange1", "cyan1", "darkgrey", "darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "lightskyblue", "darkgreen", "deeppink", "khaki2", "firebrick", "brown1", "darkorange1", "cyan1", "royalblue4", "darksalmon", "darkblue", "royalblue4", "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", "darkgoldenrod1", "darkseagreen", "darkorchid", "darkolivegreen1", "brown1", "darkorange1", "cyan1", "darkgrey")
+
+
+#input data
+ps_Genus <- psmelt(transform_sample_counts(tax_glom(psdata_OBER, "Genus"), fun = function(x) x/sum(x)))
+
+Genus_abundances <- ps_Genus %>% 
+  as_tibble() %>% 
+  select(Sample, Sample_type, Filter_type, Protocol, Time, combined, Genus, Abundance) %>% 
+  mutate(combined = as.character(combined)) %>% 
+  group_by(Sample, combined, Genus) %>% 
+  summarize(rel_abund = sum(Abundance), .groups = "drop") %>% 
+  group_by(combined, Genus) %>% 
+  summarize(mean_rel_abund = 100* mean(rel_abund), .groups = "drop") %>% 
+  mutate(Genus = str_replace(Genus, "(.*)_unclassified", "Unclassified *\\1*"),
+         Genus = str_replace(Genus, "uncultured$", "Unclassified bacterium"),
+         Genus = str_replace(Genus, "^(\\S*)$", "*\\1*"))
+
+
+Genus_pool <- Genus_abundances %>% 
+  group_by(Genus) %>% 
+  summarize(pool = max(mean_rel_abund) < 5, 
+            mean = mean(mean_rel_abund), 
+            .groups = "drop") 
+  
+library(RColorBrewer)
+inner_join(Genus_abundances, Genus_pool, by="Genus") %>% 
+  mutate(Genus = if_else(pool, "Other (< 5%)", Genus)) %>% 
+  group_by(combined, Genus) %>%
+  summarize(mean_rel_abund = sum(mean_rel_abund), 
+            mean = min(mean),
+            .groups = "drop") %>% 
+  mutate(Genus = factor(Genus), 
+         Genus = fct_reorder(Genus, mean, .desc = T),
+         Genus = fct_shift(Genus, n=1)) %>% 
+ggplot(aes(x=combined, y = mean_rel_abund, fill = Genus)) +
+  geom_col() +
+  scale_y_continuous(expand = c(0,0)) +
+  labs(x=NULL, y="Mean Relative Abundance (%)") +
+  scale_fill_manual(name="Genus",
+                    values = colorset) + #c(rev(brewer.pal(6, "Dark2")), rev(brewer.pal(8, "Paired")))) +
+                    
+  #                       breaks = c("*Dysgonomonas*",
+  #                                  "*Dechlorosoma*",
+  #                                  "*Leptolinea*",
+  #                                  "*Proteiniphilum*",
+  #                                  "*Petrimonas*",
+  #                                  "*Geobacter*",
+  #                                  "Unclassified bacterium",
+  #                                  "Other (< 5%)"),
+  #                       values = c(brewer.pal(8,"Paired"), "grey")) + # with palette
+  #                       #values = colorset) +
+  theme_classic() +
+  theme(axis.text.x = element_markdown(),
+        legend.text = element_markdown(),
+        legend.key.size = unit(10, "pt")) +
+  coord_flip()
+
+```
+Fig. x. First check Riffomonas video about barplots and legends and str_replace to adjust regex for Family_Unclas..
+
+
+
+```{r sample_wise rel abund barplot, eval=T, echo=T, message=FALSE, warning=TRUE, cache=FALSE, include=T}
+
+Genus_abundances_sample <- ps_Genus %>% 
+  as_tibble() %>% 
+  select(Sample, Sample_type, Filter_type, Protocol, Time, combined, Genus, Abundance) %>% 
+  mutate(combined = as.character(combined)) %>% 
+  group_by(Protocol, Sample, combined, Genus) %>% 
+  summarize(rel_abund = sum(Abundance), .groups = "drop") %>% 
+  group_by(Protocol, Sample, combined, Genus) %>% 
+  summarize(mean_rel_abund = 100* mean(rel_abund), .groups = "drop") %>% 
+  mutate(Genus = str_replace(Genus, "(.*)_unclassified", "Unclassified *\\1*"),
+         Genus = str_replace(Genus, "uncultured$", "Unclassified bacterium"),
+         Genus = str_replace(Genus, "^(\\S*)$", "*\\1*"))
+
+
+Genus_pool_sample <- Genus_abundances_sample %>% 
+  group_by(Sample, combined, Protocol, Genus) %>% 
+  summarize(mean = mean(mean_rel_abund), .groups = "drop") %>% 
+  group_by(Genus) %>% 
+  summarize(pool = max(mean) < 5, 
+            mean = mean(mean), 
+            .groups = "drop") 
+  
+sample_order <- Genus_abundances_sample %>% 
+  filter(Genus ==  "*Nitrospira*") %>% 
+  arrange(desc(mean_rel_abund)) %>% 
+  mutate(order = 1:nrow(.)) %>% 
+  select(Sample, order)
+
+
+inner_join(Genus_abundances_sample, Genus_pool_sample, by="Genus") %>% 
+  mutate(Genus = if_else(pool, "Other (< 5%)", Genus)) %>% 
+  group_by(Protocol, Sample, combined, Genus) %>%
+  summarize(rel_abund = sum(mean_rel_abund), 
+            mean = min(mean),
+            .groups = "drop") %>% 
+  mutate(Genus = factor(Genus), 
+         Genus = fct_reorder(Genus, mean, .desc = T),
+         Genus = fct_shift(Genus, n=1)) %>% 
+  inner_join(., sample_order, by = "Sample") %>% 
+  mutate(Sample = factor(Sample),
+         Sample = fct_reorder(Sample, order)) %>% 
+ggplot(aes(x=Sample, y = rel_abund, fill = Genus)) +
+  geom_col(width = 1) +
+  scale_fill_manual(name="Genus",
+                    values = colorset) +
+                        # breaks = c("*Geobacter*",
+                        #            "*Dysgonomonas*",
+                        #            "*Dechlorosoma*",
+                        #            "*Leptolinea*",
+                        #            "*Proteiniphilum*",
+                        #            "*Petrimonas*",
+                        #            "*Family_PHOS-HE36*",
+                        #            "Unclassified bacterium",
+                        #            "Other (< 5%)"),
+                        # values = c(brewer.pal(8,"Paired"),"grey")) + # with palette
+                        # #values = colorset) +
+  scale_y_continuous(expand = c(0,0)) +
+  facet_grid(~Protocol, space = "free", scales = "free_x", switch = "x") +
+  labs(x=NULL, y="Mean Relative Abundance (%)") +
+  guides(fill = guide_legend(nrow = 3, byrow = F)) +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),
+        legend.text = element_markdown(),
+        legend.key.size = unit(7, "pt"),
+        axis.ticks.x = element_blank(), 
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        legend.position = "bottom")
+
+ggsave("figures/OBER_stacked_barplot_Genus.pdf", width = 5, height = 4, units = "in") 
+
+```
+
+
