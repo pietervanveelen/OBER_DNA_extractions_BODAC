@@ -242,7 +242,7 @@ metadata_dna %>%
   #pivot_wider(names_from = waves, values_from = Absorbance_ratio)
   #filter(Purification == "unpurified") %>% 
   ggplot(aes(x = Sample_type, y = Absorbance_ratio)) +
-  geom_abline(intercept = 1.8, slope =0, size=2, color = "grey80", alpha = 0.7) +
+  geom_abline(intercept = 1.8, slope =0, size=1, color = "grey80", alpha = 0.7) +
   geom_point(aes(color = Protocol, shape = Filter_type),
              position = position_jitterdodge(0.2), show.legend = T, size = 2) +
   scale_color_manual(values = c(brewer.pal(2, "Dark2"))) +
@@ -281,44 +281,72 @@ purity_fig <- plot_grid(purity_plots, legend_purity, nrow=2, rel_heights = c(6, 
 purity_fig
 
 # save figure
-ggsave(plot = purity_fig, filename = "figures/OBER_DNA_purity.pdf", width = 5, height = 7)
+ggsave(plot = purity_fig, filename = "figures/Fig_1_OBER_DNA_purity.pdf", width = 6, height = 5)
  
 ```
 
 #### Analysis of DNA concentrations
-```{r plot and stats DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+```{r plot DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F,fig.width=5, fig.height=10}
 
 # plot DNA concentration unpurified only
+unpurified_yield <- 
 metadata_dna %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
   filter(Purification == "unpurified") %>% 
   select(SampleID, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
   distinct() %>% 
-  ggplot(aes(x = Protocol, y = dna_amount_ng, color = Protocol)) +
-  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
-  stat_summary(fun = median, pch = 21) +
+  ggplot(aes(x = Protocol, y = dna_amount_ng/1000, color = Protocol, fill = Protocol)) +
+  stat_summary(fun = median, geom = "bar", alpha = 0.5) +
+  geom_point(size = 2, position = position_jitterdodge(0.2), show.legend = F) +
+  scale_color_manual(values = c(brewer.pal(2, "Dark2"))) +
+  scale_fill_manual(values = c(brewer.pal(2, "Dark2"))) +
   facet_grid(~Sample_type + Filter_type) +
   theme_classic() +
-  labs(y = "DNA yield (ng)", x = NULL) +
+  labs(y = expression(paste("DNA yield (",mu,"g) before purification")), x = NULL) +
   #theme(legend.position = "bottom") +
-  ggtitle("DNA yield before purification")
+  #ggtitle("DNA yield before purification") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 # plot DNA concentration purified only
+purified_yield <- 
 metadata_dna %>% 
   mutate(dna_amount_ng = ifelse(Purification == "unpurified", DNA_conc_ng_ul*30, 
                                 DNA_conc_ng_ul*20)) %>% 
   filter(Purification == "purified") %>% 
   select(SampleID, Sample_type, Filter_type, Protocol, dna_amount_ng) %>% 
   distinct() %>% 
-  ggplot(aes(x = Protocol, y = dna_amount_ng, color = Protocol)) +
-  geom_point(position = position_jitterdodge(0.2), show.legend = F) +
-  stat_summary(fun = median, pch = 21) +
+  ggplot(aes(x = Protocol, y = dna_amount_ng/1000, color = Protocol, fill=Protocol)) +
+  stat_summary(fun = median, geom = "bar", alpha = 0.5) +
+  geom_point(size = 2, position = position_jitterdodge(0.2), show.legend = F) +
+  scale_color_manual(values = c(brewer.pal(2, "Dark2"))) +
+  scale_fill_manual(values = c(brewer.pal(2, "Dark2"))) +
   facet_grid(~Sample_type + Filter_type) +
   theme_classic() +
-  labs(y = "DNA yield (ng)", x = NULL) +
+  labs(y = expression(paste("DNA yield (",mu,"g) after purification")), x = NULL) +
   #theme(legend.position = "bottom") +
-  ggtitle("DNA yield after purification")
+  #ggtitle("DNA yield after purification") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+# DNA yield plot
+plot_fig <- cowplot::plot_grid(unpurified_yield + theme(legend.position = "none"), 
+                               purified_yield + theme(legend.position = "none"),
+                               get_legend(unpurified_yield + 
+                                            theme(legend.position = "bottom",
+                                                  legend.direction = "horizontal")), 
+                               labels = c("A", "B"),
+                               nrow = 3, 
+                               rel_heights = c(1, 1, 0.2))
+# show plot
+plot_fig
+
+# save plot
+ggsave(plot_fig, filename = "figures/Figure_2_DNA_quantity.pdf", width = 4, height = 9)
+
+```
+
+```{r stats DNA concentrations, message=F, echo=T, eval=T, warning=T, include=T, cache=F,fig.width=4, fig.height=4}
 
 # tabulate loss
 metadata_dna_ %>%
@@ -332,7 +360,8 @@ metadata_dna_ %>%
   ggplot(aes(y = loss_ng, x = Protocol, color = Sample_type)) +
   geom_point() +
   facet_wrap(~Filter_type) +
-  theme_classic()
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 # statistics
 # unpurified
@@ -533,7 +562,11 @@ Shannon <- alpha %>%
         strip.placement = "outside",
         legend.position = "bottom")
 
+# compile plot
 alpha_div = plot_grid(Chao1, Shannon, labels  = c("A", "B"), ncol = 2)
+# show plot
+alpha_div
+# save plot
 ggsave(alpha_div, filename = "figures/plot_alpha_div_OBER.pdf", width = 8, height = 6)
 
 ```
@@ -547,10 +580,25 @@ alpha <- estimate_richness(psdata_OBER_rare, measures = c("Chao1", "Shannon"))
 alpha$sampleID <- row.names(alpha)
 metadata$sampleID <- sample_names(psdata_OBER_rare)
 alpha <- left_join(metadata, alpha, by = "sampleID")
+alpha <- alpha %>% mutate(combined = factor(combined, levels= 
+                                c("Pre-filter-Granules-Before",
+                                  "Pre-filter-Granules-After",
+                                  "Pre-filter-Water-NA",
+                                  "Polishing_filter-Granules-Before",
+                                  "Polishing_filter-Granules-After",
+                                  "Polishing_filter-Water-NA")))
 
+
+alpha %>% 
+  group_by(Sample_type, Filter_type, Time, Protocol) %>% 
+  summarize(n())
+
+alpha %>% 
+  pull(combined) %>% levels()
+  
 # plot alpha diversity
 Chao1 <- alpha %>% 
-  ggplot(aes(x=combined, y=Chao1, color = combined, shape = Protocol)) +
+ggplot(aes(x=combined, y=Chao1, color = combined, shape = Protocol)) +
   geom_jitter(aes(group = Protocol), position = position_dodge(0.3), show.legend = T) +
   #geom_bar(stat="identity") + 
   theme_classic() +
@@ -560,7 +608,8 @@ Chao1 <- alpha %>%
         axis.ticks.x = element_blank(), 
         strip.background = element_blank(),
         strip.placement = "outside",
-        legend.position = "bottom")
+        legend.position = "bottom") 
+
 Shannon <- alpha %>% 
   ggplot(aes(x=combined, y=Shannon, color = combined, shape = Protocol)) +
   geom_jitter(aes(group = Protocol), position = position_dodge(0.3), show.legend = T) +
@@ -574,8 +623,14 @@ Shannon <- alpha %>%
         strip.placement = "outside",
         legend.position = "bottom")
 
-alpha_div = plot_grid(Chao1, Shannon, labels  = c("A", "B"), ncol = 2)
-ggsave(alpha_div, filename = "figures/plot_alpha_div_OBER_rare16865.pdf", width = 8, height = 6)
+# create plot
+alpha_div_rare = plot_grid(Chao1, Shannon, labels  = c("A", "B"), ncol = 2)
+
+# show plot
+alpha_div_rare
+
+# save plot
+ggsave(alpha_div_rare, filename = "figures/plot_alpha_div_OBER_rare16865.pdf", width = 8, height = 6)
 
 
 ```
