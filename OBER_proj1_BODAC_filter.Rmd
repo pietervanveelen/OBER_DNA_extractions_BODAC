@@ -24,8 +24,10 @@ if (!requireNamespace("devtools", quietly= TRUE)){install.packages("devtools")}
 devtools::install_github("jbisanz/qiime2R")
 if (!requireNamespace("devtools", quietly= TRUE)){install.packages("tidyverse")}
 if (!requireNamespace("devtools", quietly= TRUE)){install.packages("openxlsx")}
+if (!requireNamespace("pairwiseAdonis", quietly = TRUE)){devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")}
 #devtools::install_github("adw96/breakaway") 
 #devtools::install_github("adw96/DivNet")
+if (!requireNamespace("ANCOMBC", quietly = TRUE)){BiocManager::install("ANCOMBC")}
 
 ```
 
@@ -56,6 +58,9 @@ library(ggtext)
 library(cowplot)
 library(RColorBrewer)
 library(broom)
+library(ANCOMBC)
+library(pairwiseAdonis)
+
 ```
 
 ```{r import data, message=F, echo=T, eval=T, warning=T, include=F, cache=F}
@@ -459,9 +464,16 @@ source("scripts/ampvis2_internals.r")
 source("scripts/amp_rankabundance.r")
 source("scripts/amp_rarecurve.r")
 
+# show plot
 amp_rarecurve(psdata_OBER_unfiltered, color = "combined", legend.position = "bottomright")
-amp_rarecurve(psdata_OBER, color = "combined", legend.position = "bottomright")
-amp_rarecurve(psdata_OBER, color = "Protocol", legend.position = "bottomright")
+
+# save plot
+pdf("figures/OBER_proj1_BODAC_rarefaction_curves.pdf", useDingbats = F, width = 6, height = 4)
+amp_rarecurve(psdata_OBER_unfiltered, color = "combined", legend.position = "bottomright")
+dev.off()
+
+#amp_rarecurve(psdata_OBER, color = "combined", legend.position = "bottomright")
+#amp_rarecurve(psdata_OBER, color = "Protocol", legend.position = "bottomright")
 
 # difference in sample coverage (5.75)
 max(sample_sums(psdata_OBER)/min(sample_sums(psdata_OBER)))
@@ -470,6 +482,12 @@ max(sample_sums(psdata_OBER)/min(sample_sums(psdata_OBER)))
 ```
 
 ```{r avg_rarefy psdata, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+
+# summary statistics of dataset
+summary(sample_sums(psdata_OBER)) %>% 
+  enframe(name = "statistic", value = "read count") %>% 
+  as_tibble() %>% kableExtra::kbl(caption = "summary statistics of sequence data set", centering = T, align = "l") %>% kableExtra::kable_classic()
+
 
 # rarefy to 16865
   # create subset frequency matrix
@@ -583,9 +601,9 @@ alpha <- left_join(metadata, alpha, by = "sampleID")
 alpha <- alpha %>% mutate(combined = factor(combined, levels= 
                                 c("Pre-filter-Granules-Before",
                                   "Pre-filter-Granules-After",
-                                  "Pre-filter-Water-NA",
                                   "Polishing_filter-Granules-Before",
                                   "Polishing_filter-Granules-After",
+                                  "Pre-filter-Water-NA",
                                   "Polishing_filter-Water-NA")))
 
 
@@ -598,9 +616,11 @@ alpha %>%
   
 # plot alpha diversity
 Chao1 <- alpha %>% 
-ggplot(aes(x=combined, y=Chao1, color = combined, shape = Protocol)) +
-  geom_jitter(aes(group = Protocol), position = position_dodge(0.3), show.legend = T) +
-  #geom_bar(stat="identity") + 
+ggplot(aes(x=combined, y=Chao1, color = Protocol, shape = Protocol, fill = Protocol)) +
+  stat_summary(fun = median, geom = "bar", alpha = 0.5, position = position_dodge2(0.7, preserve = "single"), width=0.9) +
+  geom_point(size = 2, position = position_jitterdodge(0.2), show.legend = F) +
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) +
+  scale_fill_manual(values = c(brewer.pal(6, "Dark2"))) +
   theme_classic() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   theme(legend.text = element_markdown(),
@@ -611,9 +631,11 @@ ggplot(aes(x=combined, y=Chao1, color = combined, shape = Protocol)) +
         legend.position = "bottom") 
 
 Shannon <- alpha %>% 
-  ggplot(aes(x=combined, y=Shannon, color = combined, shape = Protocol)) +
-  geom_jitter(aes(group = Protocol), position = position_dodge(0.3), show.legend = T) +
-  #geom_bar(stat="identity") + 
+ggplot(aes(x=combined, y=Shannon, color = Protocol, shape = Protocol, fill = Protocol)) +
+  stat_summary(fun = median, geom = "bar", alpha = 0.5, position = position_dodge2(0.7, preserve = "single"), width=0.9) +
+  geom_point(size = 2, position = position_jitterdodge(0.3), show.legend = F) +
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) +
+  scale_fill_manual(values = c(brewer.pal(6, "Dark2"))) +
   theme_classic() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   theme(legend.text = element_markdown(),
@@ -621,7 +643,7 @@ Shannon <- alpha %>%
         axis.ticks.x = element_blank(), 
         strip.background = element_blank(),
         strip.placement = "outside",
-        legend.position = "bottom")
+        legend.position = "bottom") 
 
 # create plot
 alpha_div_rare = plot_grid(Chao1, Shannon, labels  = c("A", "B"), ncol = 2)
@@ -635,7 +657,71 @@ ggsave(alpha_div_rare, filename = "figures/plot_alpha_div_OBER_rare16865.pdf", w
 
 ```
 
-```{r, eval=F, echo=F, include=F}
+```{r Alpha diversity statistics, message=F, echo=F, eval=F, warning=F, include=F, cache=F, fig.height=8, fig.width=4}
+
+# test for differences in richness and diversity among DNA extraction protocols and sample type
+alpha %>% with(., lm(Chao1 ~ Filter_type + Sample_type + Protocol)) %>% 
+  anova %>% 
+  broom::tidy() %>% 
+  kableExtra::kable(caption = "Chao1 richness  statistics", digits = 3) %>%  kableExtra::kable_classic()
+
+
+alpha %>% with(., lm(Shannon ~ Filter_type + Sample_type + Protocol)) %>% 
+  anova %>% 
+  broom::tidy() %>% 
+  kableExtra::kable(caption = "Shannon diversity statistics", digits = 3) %>%  kableExtra::kable_classic()
+
+## Granule vs BW
+# Ch
+ao1 pairwise
+alpha %>% 
+  filter(Protocol == "Fast_DNA") %>% 
+  with(., lm(Chao1 ~ Sample_type)) %>% 
+  anova() %>% 
+  broom::tidy() %>% 
+  kableExtra::kable(caption = "Difference Chao1 richness between granules and backwash water across BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
+
+# shannon pairwise
+alpha %>% 
+  filter(Protocol == "Fast_DNA") %>% 
+  with(., lm(Shannon ~ Sample_type)) %>% 
+  anova() %>% 
+  broom::tidy() %>% 
+  kableExtra::kable(caption = "Difference Shannon diversity between granules and backwash water across BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
+
+### NOT RUN because of low power (n=3 per group including mixture sample)
+# ## Before vs After in Granules only
+# # Chao1 pairwise
+# alpha_time_chao1 <- 
+# alpha %>% 
+#   filter(Protocol == "Fast_DNA",
+#          Sample_type == "Granules") %>% 
+#   with(., lm(Chao1 ~ Time*Filter_type)) 
+# 
+# alpha_time_chao1 %>% 
+#   anova() %>% 
+#   broom::tidy() %>% 
+#   kableExtra::kable(caption = "Difference Chao1 richness between before and after backwashing of granules per BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
+# 
+# phia::testInteractions(alpha_time_chao1, fixed = "Filter_type", pairwise = "Time", adjustment = "fdr")
+# 
+# # shannon pairwise
+# alpha_time_shannon <-
+# alpha %>% 
+#   filter(Protocol == "Fast_DNA",
+#          Sample_type == "Granules") %>% 
+#   with(., lm(Shannon ~ Time*Filter_type)) 
+# 
+# alpha_time_shannon %>% 
+#   anova() %>% 
+#   broom::tidy() %>% 
+#   kableExtra::kable(caption = "Difference Shannon diversity between before and after backwashing of granules per BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
+# 
+# phia::testInteractions(alpha_time_shannon, fixed = "Filter_type", pairwise = "Time", adjustment = "fdr")
+
+```
+
+```{r Breakaway, eval=F, echo=F, include=F}
 #### calculate alpha diversity using Breakaway and DivNet
 # follow: https://adw96.github.io/breakaway/articles/diversity-hypothesis-testing.html
 # https://adw96.github.io/breakaway/reference/index.html
@@ -761,16 +847,24 @@ PCoA_wu <- ordinate(psdata_OBER_rel, method = "PCoA", distance = "wunifrac")
 colnames(sample_data(psdata_OBER_rel))
 plot_PCoA_BC <- plot_ordination(physeq = psdata_OBER_rel, 
                                 ordination = PCoA_BC, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("BC")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("Bray Curtis")
 plot_PCoA_Jac <- plot_ordination(physeq = psdata_OBER_rel, 
                                  ordination = PCoA_Jac, 
-                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("Jaccard")
+                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("Jaccard")
 plot_PCoA_uu <- plot_ordination(physeq = psdata_OBER_rel, 
                                 ordination = PCoA_uu, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("unweighted UniFrac")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("unweighted UniFrac")
 plot_PCoA_wu <- plot_ordination(physeq = psdata_OBER_rel, 
                                 ordination = PCoA_wu, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("weighted UniFrac")
 
 pdf("figures/plot_beta_diversity_OBER_proj1_BODAC_rel_abund.pdf", useDingbats = F, width = 7, height = 12)
 gridExtra::grid.arrange(plot_PCoA_Jac, plot_PCoA_BC, plot_PCoA_uu, plot_PCoA_wu, nrow=4, ncol=1)
@@ -778,7 +872,7 @@ dev.off()
 
 ```
 
-```{r total beta diversity rarefied, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=8, fig.width=4}
+```{r total beta diversity rarefied, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=7, fig.width=12}
 
 ### Beta diversity analysis first
 # input data  = psdata_OBER_rare
@@ -792,20 +886,31 @@ PCoA_wu <- ordinate(psdata_OBER_rare, method = "PCoA", distance = "wunifrac")
 colnames(sample_data(psdata_OBER_rare))
 plot_PCoA_BC <- plot_ordination(physeq = psdata_OBER_rare, 
                                 ordination = PCoA_BC, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("BC")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("Bray Curtis")
 plot_PCoA_Jac <- plot_ordination(physeq = psdata_OBER_rare, 
                                  ordination = PCoA_Jac, 
-                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("Jaccard")
+                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("Jaccard")
 plot_PCoA_uu <- plot_ordination(physeq = psdata_OBER_rare, 
                                 ordination = PCoA_uu, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("unweighted UniFrac")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("unweighted UniFrac")
 plot_PCoA_wu <- plot_ordination(physeq = psdata_OBER_rare, 
                                 ordination = PCoA_wu, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + 
+  scale_color_manual(values = c(brewer.pal(6, "Dark2"))) + 
+  ggtitle("weighted UniFrac")
+# compile combined beta diversity
+beta_plot = cowplot::plot_grid(plot_PCoA_Jac, plot_PCoA_BC, plot_PCoA_uu, plot_PCoA_wu, nrow=2, ncol=2)
 
-pdf("figures/plot_beta_diversity_OBER_proj1_BODAC_rare16865.pdf", useDingbats = F, width = 7, height = 12)
-gridExtra::grid.arrange(plot_PCoA_Jac, plot_PCoA_BC, plot_PCoA_uu, plot_PCoA_wu, nrow=4, ncol=1)
-dev.off()
+cowplot::plot_grid(plot_PCoA_Jac, plot_PCoA_BC, plot_PCoA_uu, plot_PCoA_wu, nrow=4, ncol=1) %>% 
+ggsave(., filename = "figures/plot_beta_diversity_OBER_proj1_BODAC_rare16865_v2.pdf", width = 5, height = 10)
+
+
 
 ```
 
@@ -840,6 +945,8 @@ anova(betadisper_wu) %>% broom::tidy() %>% kableExtra::kbl(caption = "Dispersion
 
 ## for all four beta diversity metrics no significant group differences were found in group dispersions (distance to centroid).
 
+
+
 # PERMANOVA (permutational multivariate analysis of variance) with the 'adonis' function
 
 adonis_jac <- adonis2(dist_jac ~ Filter_type + Sample_type + Protocol, permutations = 999, data = metadata2, by = "margin")
@@ -859,14 +966,50 @@ adonis_wu %>% broom::tidy() %>% kableExtra::kbl(caption = "weighted UniFrac") %>
 
 Preliminary beta diversity analysis showed that DNA extraction protocol does not affect beta diversity estimates. However, backwash water had different microbial communities than granule samples, since sample type explained between 17% and 49% of variation, depending on whether the chosen distance metric takes into account ASV relative abundance and/or phylogenetic relationships. Filter type explains a lot of variation ranging from 18% to 42% of variation, again depending on the beta diversity metric.  All estimates are interpreted from distance-based redundancy analysis with adonis2 function from vegan, estimating marginal effects only (i.e. accounting for all other effects in the model). 
 
+#### Difference between granule and backwash water microbial community composition across both filters
 
-#### Effects of backwashing on granule microbial community composition needs subsetting that filters out all water samples.
+```{r backwashing beta diversity 2, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=12, fig.width=7}
 
-```{r granule beta diversity, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=12, fig.width=7}
+# Pairwise Permanova to detect pairwise differences between granules and backwash water
+
+## subsetting by removing CTAB method
+psdata_OBER_rare_FastDNA <- subset_samples(psdata_OBER_rare, Protocol == "Fast_DNA") #& Filter_type != "Pre-filter")
+# prareiminary: needs to include sqrt transformation and wisconsin double standardisation as in plot
+metadata2_FastDNA <- data.frame(sample_data(psdata_OBER_rare_FastDNA), stringsAsFactors = T)
+
+# calculate distance matrices
+dist_bc_FastDNA <- distance(psdata_OBER_rare_FastDNA, method = "bray")
+dist_uu_FastDNA <- distance(psdata_OBER_rare_FastDNA, method = "uunifrac")
+
+# calculate pairwise adonis
+# bray
+PA_FastDNA_bray <- pairwiseAdonis::pairwise.adonis(dist_bc_FastDNA, 
+                                factors = metadata2_FastDNA$Sample_type, 
+                                p.adjust.m = "fdr",
+                                perm = 999) %>% tibble() %>% mutate(method = "Bray Curtis")
+# uunifrac
+PA_FastDNA_uu <- pairwiseAdonis::pairwise.adonis(dist_uu_FastDNA, 
+                                factors = metadata2_FastDNA$Sample_type, 
+                                p.adjust.m = "fdr",
+                                perm = 999) %>% tibble() %>% mutate(method = "Unweighted UniFrac")
+
+
+
+bind_rows(PA_FastDNA_bray, PA_FastDNA_uu) %>% 
+  select(method, everything())%>% 
+  kableExtra::kbl(caption = "Beta diversity pairwise differences between granules and backwash water across BODAC1 and 2") %>% 
+  kableExtra::kable_minimal()
+
+```
+
+
+#### Effects of backwashing on granule microbial community composition performed after filtering out all water samples (FastSpin Only).
+
+```{r granule beta diversity, message=F, echo=T, eval=T, warning=T, include=T, cache=F, fig.height=7, fig.width=12}
 
 
 ## subsetting by removing water samples
-psdata_OBER_rare_noH2O <- subset_samples(psdata_OBER_rare, Filter_type != "Blank" & Sample_type != "Water")
+psdata_OBER_rare_noH2O <- subset_samples(psdata_OBER_rare, Filter_type != "Blank" & Sample_type != "Water" & Protocol == "Fast_DNA")
 # prareiminary: needs to include sqrt transformation and wisconsin double standardisation as in plot
 metadata2_noH2O <- data.frame(sample_data(psdata_OBER_rare_noH2O), stringsAsFactors = T)
 
@@ -879,36 +1022,34 @@ PCoA_wu_noH2O <- ordinate(psdata_OBER_rare_noH2O, method = "PCoA", distance = "w
 colnames(sample_data(psdata_OBER_rare_noH2O))
 plot_PCoA_BC_noH2O <- plot_ordination(physeq = psdata_OBER_rare_noH2O, 
                                 ordination = PCoA_BC_noH2O, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("BC - Granules only")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("BC - Granules only") + theme_classic()
 plot_PCoA_Jac_noH2O <- plot_ordination(physeq = psdata_OBER_rare_noH2O, 
                                  ordination = PCoA_Jac_noH2O, 
-                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("Jaccard - Granules only")
+                                 type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("Jaccard - Granules only") + theme_classic()
 plot_PCoA_uu_noH2O <- plot_ordination(physeq = psdata_OBER_rare_noH2O, 
                                 ordination = PCoA_uu_noH2O, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("unweighted UniFrac - Granules only")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("unweighted UniFrac - Granules only") + theme_classic()
 plot_PCoA_wu_noH2O <- plot_ordination(physeq = psdata_OBER_rare_noH2O, 
                                 ordination = PCoA_wu_noH2O, 
-                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac - Granules only")
+                                type = "samples", axes = c(1,2), color = "combined", shape = "Protocol") + ggtitle("weighted UniFrac - Granules only") + theme_classic()
 
-beta_plot = gridExtra::grid.arrange(plot_PCoA_Jac_noH2O, plot_PCoA_BC_noH2O, plot_PCoA_uu_noH2O, plot_PCoA_wu_noH2O, nrow=4, ncol=1)
-beta_plot
+beta_plot = cowplot::plot_grid(plot_PCoA_Jac_noH2O, plot_PCoA_BC_noH2O, plot_PCoA_uu_noH2O, plot_PCoA_wu_noH2O, nrow=2, ncol=2)
+beta_plot 
 
-pdf("figures/plot_beta_diversity_OBER_proj1_BODAC_Granules_only_rare16865.pdf", useDingbats = F, width = 7, height = 12)
+pdf("figures/Fig_S3_plot_beta_diversity_OBER_proj1_BODAC_Granules_only_rare16865.pdf", useDingbats = F, width = 10, height = 5)
 beta_plot
 dev.off()
 
 ```
 
-Backwashing seems to affect the community composition of granule biofilm slighly, washing out particular bacterial lineages as the effects are most clear in weighted and unweighted UniFrac ordinations, and particularly in polishing filters.
+Backwashing seems to affect the community composition of granule biofilm slightly, washing out particular bacterial lineages as the effects are most clear in weighted and unweighted UniFrac ordinations, and particularly in polishing filters.
 
-```{r granule beta diversity stats, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
+```{r backwashing beta diversity stats, message=F, echo=T, eval=T, warning=T, include=T, cache=F}
 
 dist_bc_noH2O <- distance(psdata_OBER_rare_noH2O , "bray")
 dist_jac_noH2O <- distance(psdata_OBER_rare_noH2O, "jaccard", binary=T)
 dist_uu_noH2O <- distance(psdata_OBER_rare_noH2O,  "uunifrac")
 dist_wu_noH2O <- distance(psdata_OBER_rare_noH2O,  "wunifrac")
-
-
 
 
 # test model assumptions with vegan::betadisper
@@ -931,17 +1072,16 @@ anova(betadisper_wu_noH2O) %>% broom::tidy() %>% kableExtra::kbl(caption = "Disp
 
 # PERMANOVA (permutational multivariate analysis of variance) with the 'adonis' function
 
-adonis_jac_noH2O <- adonis2(dist_jac_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_jac_noH2O <- adonis2(dist_jac_noH2O ~ Filter_type + Time , permutations = 999, data = metadata2_noH2O, by = "margin")
 adonis_jac_noH2O %>% broom::tidy() %>% kableExtra::kbl(caption = "Jaccard distance") %>% kableExtra::kable_minimal()
 
-
-adonis_bc_noH2O <- adonis2(dist_bc_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_bc_noH2O <- adonis2(dist_bc_noH2O ~ Filter_type + Time , permutations = 999, data = metadata2_noH2O, by = "margin")
 adonis_bc_noH2O %>% broom::tidy() %>% kableExtra::kbl(caption = "Bray-Curtis dissimilarity") %>% kableExtra::kable_minimal()                 
 
-adonis_uu_noH2O <- adonis2(dist_uu_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_uu_noH2O <- adonis2(dist_uu_noH2O ~ Filter_type + Time , permutations = 999, data = metadata2_noH2O, by = "margin")
 adonis_uu_noH2O %>% broom::tidy() %>% kableExtra::kbl(caption = "unweighted UniFrac") %>% kableExtra::kable_minimal()
 
-adonis_wu_noH2O <- adonis2(dist_wu_noH2O ~ Filter_type + Time + Protocol, permutations = 999, data = metadata2_noH2O, by = "margin")
+adonis_wu_noH2O <- adonis2(dist_wu_noH2O ~ Filter_type + Time , permutations = 999, data = metadata2_noH2O, by = "margin")
 adonis_wu_noH2O %>% broom::tidy() %>% kableExtra::kbl(caption = "weighted UniFrac") %>% kableExtra::kable_minimal()
 
 
@@ -1074,10 +1214,10 @@ Genus_abundances_granules <- ps_Genus_rare %>%
   as_tibble() %>% 
   select(Sample, Sample_type, Filter_type, Protocol, Time, combined, Genus, Abundance) %>% 
   mutate(combined = as.character(combined)) %>% 
-  group_by(Sample, Sample_type, combined, Genus) %>% 
+  group_by(Sample, Sample_type, Protocol, combined, Genus) %>% 
   filter(Sample_type == "Granules") %>% 
   summarize(rel_abund = sum(Abundance), .groups = "drop") %>% 
-  group_by(combined, Genus) %>% 
+  group_by(combined, Protocol, Genus) %>% 
   summarize(mean_rel_abund = 100* mean(rel_abund), .groups = "drop") %>% 
   mutate(Family = if_else(Family == "uncultured", paste0("Family in ", Order), Family)) %>% 
   mutate(Genus = if_else(Genus == "Family_uncultured", paste0("Genus in ", Order), Genus)) %>%
@@ -1089,10 +1229,10 @@ Genus_abundances_BW <- ps_Genus_rare %>%
   as_tibble() %>% 
   select(Sample, Sample_type, Filter_type, Protocol, Time, combined, Genus, Abundance) %>% 
   mutate(combined = as.character(combined)) %>% 
-  group_by(Sample, Sample_type, combined, Genus) %>% 
+  group_by(Sample, Sample_type, Protocol, combined, Genus) %>% 
   filter(Sample_type == "Water") %>% 
   summarize(rel_abund = sum(Abundance), .groups = "drop") %>% 
-  group_by(combined, Genus) %>% 
+  group_by(combined, Protocol, Genus) %>% 
   summarize(mean_rel_abund = 100* mean(rel_abund), .groups = "drop") %>% 
   mutate(Family = if_else(Family == "uncultured", paste0("Family in ", Order), Family)) %>% 
   mutate(Genus = if_else(Genus == "Family_uncultured", paste0("Genus in ", Order), Genus)) %>%
@@ -1124,7 +1264,7 @@ library(RColorBrewer)
 barplot_granules <-
 inner_join(Genus_abundances_granules, Genus_pool_granules, by="Genus") %>% 
   mutate(Genus = if_else(pool, "Other (< 3%)", Genus)) %>% 
-  group_by(combined, Genus) %>%
+  group_by(combined, Protocol, Genus) %>%
   summarize(mean_rel_abund = sum(mean_rel_abund), 
             mean = min(mean),
             .groups = "drop") %>% 
@@ -1136,29 +1276,19 @@ ggplot(aes(x=combined, y = mean_rel_abund, fill = Genus)) +
   scale_y_continuous(expand = c(0,0)) +
   labs(x=NULL, y="Mean Relative Abundance (%)") +
   scale_fill_manual(name="Genus",
-                    values = colorset) + #c(rev(brewer.pal(6, "Dark2")), rev(brewer.pal(8, "Paired")))) +
-                    
-  #                       breaks = c("*Dysgonomonas*",
-  #                                  "*Dechlorosoma*",
-  #                                  "*Leptolinea*",
-  #                                  "*Proteiniphilum*",
-  #                                  "*Petrimonas*",
-  #                                  "*Geobacter*",
-  #                                  "Unclassified bacterium",
-  #                                  "Other (< 5%)"),
-  #                       values = c(brewer.pal(8,"Paired"), "grey")) + # with palette
-  #                       #values = colorset) +
+                    values = c(rev(brewer.pal(6, "Dark2")), rev(brewer.pal(8, "Paired")), colorset)) +
   theme_classic() +
   theme(axis.text.x = element_markdown(),
         legend.text = element_markdown(),
         legend.key.size = unit(10, "pt")) +
+  facet_wrap(~Protocol, nrow = 2) +
   coord_flip()
 
 # barplot backwash water only
 BW_barplot <- 
 inner_join(Genus_abundances_BW, Genus_pool_BW, by="Genus") %>% 
   mutate(Genus = if_else(pool, "Other (< 2%)", Genus)) %>% 
-  group_by(combined, Genus) %>%
+  group_by(combined, Protocol, Genus) %>%
   summarize(mean_rel_abund = sum(mean_rel_abund), 
             mean = min(mean),
             .groups = "drop") %>% 
@@ -1169,19 +1299,9 @@ ggplot(aes(x=combined, y = mean_rel_abund, fill = Genus)) +
   geom_col() +
   scale_y_continuous(expand = c(0,0)) +
   labs(x=NULL, y="Mean Relative Abundance (%)") +
+  facet_wrap(~Protocol, nrow = 2) +
   scale_fill_manual(name="Genus",
-                    values = c(rev(brewer.pal(6, "Dark2")), rev(brewer.pal(8, "Paired")))) +
-                    
-  #                       breaks = c("*Dysgonomonas*",
-  #                                  "*Dechlorosoma*",
-  #                                  "*Leptolinea*",
-  #                                  "*Proteiniphilum*",
-  #                                  "*Petrimonas*",
-  #                                  "*Geobacter*",
-  #                                  "Unclassified bacterium",
-  #                                  "Other (< 5%)"),
-  #                       values = c(brewer.pal(8,"Paired"), "grey")) + # with palette
-  #                       #values = colorset) +
+                    values = c(rev(brewer.pal(6, "Dark2")), rev(brewer.pal(8, "Paired")), colorset)) +
   theme_classic() +
   theme(axis.text.x = element_markdown(),
         legend.text = element_markdown(),
@@ -1190,8 +1310,9 @@ ggplot(aes(x=combined, y = mean_rel_abund, fill = Genus)) +
 
 
 
+
 bars = plot_grid(barplot_granules, BW_barplot, labels = c("A", "B"), align = "hv", nrow = 2, rel_heights = c(2, 1.3))
-ggsave(bars, filename = "figures/plot_barplots_genus_OBER_rare16865.pdf", width = 8, height = 12)
+ggsave(bars, filename = "figures/plot_barplots_genus_OBER_rare16865.pdf", width = 8, height = 8)
 bars
 
 
@@ -1275,4 +1396,121 @@ ggsave("figures/OBER_stacked_barplot_Genus_samplewise.pdf", width = 5, height = 
 
 ```
 
+
+```{r TODO -ANCOM-BC, eval=F, echo=F, include=F}
+
+# install and load ANCOM-BC
+
+# input data = ps_unfiltered
+psdata_bodac1 = psdata_OBER %>% 
+  subset_samples(Filter_type == "Pre-filter") %>% 
+  prune_taxa(taxa_sums(.)>0, .)
+
+# number of ASVs in bodac1 data
+ntaxa(psdata_bodac1)
+
+# run ANCOM-BC on ASV level
+out = ancombc(phyloseq = psdata_bodac1, group = "Protocol" 
+              ,formula = "Protocol", 
+              p_adj_method = "fdr", zero_cut = 0.9, lib_cut = 0, 
+              struc_zero = TRUE, neg_lb = TRUE, tol = 1e-5, 
+              max_iter = 100, conserve = TRUE, alpha = 0.05, 
+              global = TRUE)
+
+data_DA <-purrr::map_dfc(out$res, bind_cols) %>% 
+  rename_with(~names(out$res)) %>% 
+  as_tibble(rownames = "taxon_name")
+
+# significantly abundant (fdr < 0.05) taxa              
+out$res$diff_abn %>% filter(ProtocolFast_DNA) %>% 
+  mutate(taxon_name = row.names(.)) %>% 
+  select(taxon_name, everything()) %>% 
+  as_tibble()
+
+# plot volcano plot of differentially abundant taxa
+plot_DA <- 
+ data_DA %>% 
+  # filter(q_val < 0.05) # filter only significant taxa
+  ggplot(aes(x = beta, y=-log10(q_val))) +
+  geom_point(aes(color = if_else(q_val < 0.05, "red", "grey30"), 
+                 alpha = if_else(q_val < 0.05, 1, 0.3)),
+             show.legend = F) +
+  labs(x =  "Effect size beta", y = "significance (-log10(q))") +
+  coord_trans(y = "log10", expand = T) +
+  scale_color_manual(values = c("grey10", "red")) +
+  theme_classic() +
+  theme()
+
+plot_DA 
+
+# summarize ancom results
+
+taxa_list_bodac1 = data.frame(tax_table(psdata_bodac1)) %>% 
+  mutate(taxon_name = taxa_names(psdata_bodac1)) %>% 
+  select(taxon_name, everything()) %>% 
+  as_tibble()
+
+# table of significantly different taxa (global)
+diff_abund_bodac1 <- inner_join(data_DA, taxa_list_bodac1, by = "taxon_name") %>% 
+  select(-diff_abn) %>% 
+  arrange(desc(W))
+
+# save differentially abundant taxa
+diff_abund_bodac1 %>% 
+  write_excel_csv(file = "output_data/Table_Sx_ANCOM-BC_ASV_level.csv")
+
+
+```
+
+```{r TODO heatmap diff abund ANCOM-BC, eval=F, echo=F, include=F}
+
+# create centered log ratio transformed OTU table
+ps_clr <- microbiome::transform(psdata_bodac1, transform = "clr")
+### Heatmap differential abundant taxa ANCOM-BC
+ps_diff_abund_bodac1 <- subset_taxa(ps_clr, taxa_names(ps_clr) %in% diff_abund_bodac1$taxon_name)
+
+# ComplexHeatmap metadata
+
+matrix <- as.matrix(data.frame(otu_table(ps_diff_abund_bodac1)))
+rownames(matrix) <- as.character(tax_table(ps_diff_abund_bodac1)[, "Species"])
+metadata_sub <- data.frame(sample_data(ps_diff_abund_bodac1))
+metadata_sub = metadata_sub %>% mutate(Time = if_else(is.na(Time), "After", Time))
+# Define the annotation color for columns and rows
+annotation_col = data.frame(
+    Protocol = as.factor(metadata_sub$Protocol), 
+    Sample_type = as.factor(metadata_sub$Sample_type), 
+    Time = as.factor(metadata_sub$Time),
+    check.names = FALSE)
+rownames(annotation_col) = rownames(metadata_sub)
+
+annotation_row = data.frame(
+    Phylum = as.factor(tax_table(ps_diff_abund_bodac1)[, "Phylum"])
+)
+rownames(annotation_row) = NULL
+
+# ann_color should be named vectors
+colorset = c(RColorBrewer::brewer.pal(8, "Dark2"), RColorBrewer::brewer.pal(8, "Paired"), colorset)
+phylum_col = colorset[1:length(levels(annotation_row$Phylum))]
+names(phylum_col) = levels(annotation_row$Phylum)
+
+ann_colors = list(
+    Protocol = c(`CTAB_method` = "#1B9E77", 
+                `Fast_DNA` = "#D95F02"),
+    Sample_type = c(`Water` = "#0065AA",
+                  `Granules` = "#94DD68"),
+    Time = c(`Before` = "#FF5C00",
+             `After` = "#FFAE47"),
+    Phylum = phylum_col)
+ 
+
+pdf("figures/Heatmap_differential_abundant_ASVs_ANCOM-BC_Population_GenusTags.pdf", width = 8, height = 8, useDingbats = F)
+ComplexHeatmap::pheatmap(matrix, 
+                         scale= "row", 
+                         annotation_col = annotation_col, 
+                         annotation_row = annotation_row, 
+                         annotation_colors = ann_colors)
+dev.off()
+
+
+```
 
