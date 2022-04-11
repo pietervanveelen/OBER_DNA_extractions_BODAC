@@ -28,6 +28,7 @@ if (!requireNamespace("pairwiseAdonis", quietly = TRUE)){devtools::install_githu
 #devtools::install_github("adw96/breakaway") 
 #devtools::install_github("adw96/DivNet")
 if (!requireNamespace("ANCOMBC", quietly = TRUE)){BiocManager::install("ANCOMBC")}
+if (!requireNamespace("gitcreds", quietly = TRUE)){install.packages("gitcreds")}
 
 ```
 
@@ -41,7 +42,9 @@ if(!dir.exists("./output_data")){dir.create("./output_data")}
 
 
 ```{r library loading, message=F, echo=T, eval=T, warning=T, include=F, cache=F}
+
 ## load required packages
+library(gitcreds)
 library(phyloseq)
 library(qiime2R)
 library(tidyverse)
