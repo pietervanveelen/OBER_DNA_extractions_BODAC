@@ -52,8 +52,6 @@ library(magrittr)
 library(devtools)
 library(qiime2R)
 library(here)
-library(breakaway)
-library(DivNet)
 library(openxlsx)
 library(ape)
 library(vegan)
@@ -666,13 +664,15 @@ ggsave(alpha_div_rare, filename = "figures/plot_alpha_div_OBER_rare16865.pdf", w
 alpha %>% with(., lm(Chao1 ~ Filter_type + Sample_type + Protocol)) %>% 
   anova %>% 
   broom::tidy() %>% 
-  kableExtra::kable(caption = "Chao1 richness  statistics", digits = 3) %>%  kableExtra::kable_classic()
+  kableExtra::kable(caption = "Chao1 richness  statistics", digits = 3) %>%  
+  kableExtra::kable_classic()
 
 
 alpha %>% with(., lm(Shannon ~ Filter_type + Sample_type + Protocol)) %>% 
   anova %>% 
   broom::tidy() %>% 
-  kableExtra::kable(caption = "Shannon diversity statistics", digits = 3) %>%  kableExtra::kable_classic()
+  kableExtra::kable(caption = "Shannon diversity statistics", digits = 3) %>%  
+  kableExtra::kable_classic()
 
 ## Granule vs BW
 # Ch
@@ -1329,9 +1329,9 @@ Genus_abundances_sample <- ps_Genus_rare %>%
   as_tibble() %>% 
   select(Sample, Sample_type, Filter_type, Protocol, Time, combined, Genus, Abundance) %>% 
   mutate(combined = as.character(combined)) %>% 
-  group_by(Protocol, Sample_type, Sample, combined, Genus) %>% 
+  group_by(Protocol, Sample_type, Filter_type, Sample, combined, Genus) %>% 
   summarize(rel_abund = sum(Abundance), .groups = "drop") %>% 
-  group_by(Protocol, Sample_type, Sample, combined, Genus) %>% 
+  group_by(Protocol, Sample_type, Filter_type, Sample, combined, Genus) %>% 
   summarize(mean_rel_abund = 100* mean(rel_abund), .groups = "drop") %>% 
   mutate(Genus = str_replace(Genus, "(.*)_unclassified", "Unclassified *\\1*"),
          Genus = str_replace(Genus, "uncultured$", "Unclassified bacterium"),
@@ -1339,7 +1339,7 @@ Genus_abundances_sample <- ps_Genus_rare %>%
 
 
 Genus_pool_sample <- Genus_abundances_sample %>% 
-  group_by(Sample, Sample_type, combined, Protocol, Genus) %>% 
+  group_by(Sample, Sample_type, Filter_type, combined, Protocol, Genus) %>% 
   summarize(mean = mean(mean_rel_abund), .groups = "drop") %>% 
   group_by(Genus) %>% 
   summarize(pool = max(mean) < 5, 
@@ -1355,7 +1355,7 @@ sample_order <- Genus_abundances_sample %>%
 
 inner_join(Genus_abundances_sample, Genus_pool_sample, by="Genus") %>% 
   mutate(Genus = if_else(pool, "Other (< 5%)", Genus)) %>% 
-  group_by(Protocol, Sample, Sample_type, combined, Genus) %>%
+  group_by(Protocol, Sample, Sample_type, Filter_type, combined, Genus) %>%
   summarize(rel_abund = sum(mean_rel_abund), 
             mean = min(mean),
             .groups = "drop") %>% 
@@ -1364,7 +1364,8 @@ inner_join(Genus_abundances_sample, Genus_pool_sample, by="Genus") %>%
          Genus = fct_shift(Genus, n=1)) %>% 
   inner_join(., sample_order, by = "Sample") %>% 
   mutate(Sample = factor(Sample),
-         Sample = fct_reorder(Sample, order)) %>% 
+         Sample = fct_reorder(Sample, order), 
+         Filter_type = fct_relevel(Filter_type, "Pre-filter")) %>% 
 ggplot(aes(x=Sample, y = rel_abund, fill = Genus)) +
   geom_col(width = 1) +
   scale_fill_manual(name="Genus",
@@ -1381,7 +1382,7 @@ ggplot(aes(x=Sample, y = rel_abund, fill = Genus)) +
                         # values = c(brewer.pal(8,"Paired"),"grey")) + # with palette
                         # #values = colorset) +
   scale_y_continuous(expand = c(0,0)) +
-  facet_grid(~Sample_type+Protocol, space = "free", scales = "free_x", switch = "x") +
+  facet_grid(~Sample_type+Protocol+Filter_type, space = "free", scales = "free_x", switch = "x") +
   labs(x=NULL, y="Mean Relative Abundance (%)") +
   guides(fill = guide_legend(nrow = 3, byrow = F)) +
   theme_classic() +
@@ -1393,7 +1394,7 @@ ggplot(aes(x=Sample, y = rel_abund, fill = Genus)) +
         strip.placement = "outside",
         legend.position = "bottom")
 
-ggsave("figures/OBER_stacked_barplot_Genus_samplewise.pdf", width = 5, height = 4, units = "in") 
+ggsave("figures/OBER_stacked_barplot_Genus_samplewise_.pdf", width = 7, height = 4, units = "in") 
 
 
 
