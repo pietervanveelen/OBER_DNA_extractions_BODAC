@@ -658,7 +658,7 @@ ggsave(alpha_div_rare, filename = "figures/plot_alpha_div_OBER_rare16865.pdf", w
 
 ```
 
-```{r Alpha diversity statistics, message=F, echo=F, eval=F, warning=F, include=F, cache=F, fig.height=8, fig.width=4}
+```{r Alpha diversity statistics, message=F, echo=T, eval=T, warning=F, include=T, cache=F, fig.height=8, fig.width=4}
 
 # test for differences in richness and diversity among DNA extraction protocols and sample type
 alpha %>% with(., lm(Chao1 ~ Filter_type + Sample_type + Protocol)) %>% 
@@ -674,9 +674,28 @@ alpha %>% with(., lm(Shannon ~ Filter_type + Sample_type + Protocol)) %>%
   kableExtra::kable(caption = "Shannon diversity statistics", digits = 3) %>%  
   kableExtra::kable_classic()
 
+## BODAC 1 vs BODAC 2 (FastSpin only, before backwashing only)
+# Chao1 pairwise
+alpha %>% 
+  filter(Protocol == "Fast_DNA",
+         Time == "Before") %>% 
+  with(., lm(Chao1 ~ Filter_type)) %>% 
+  anova() %>% 
+  broom::tidy() %>% 
+  kableExtra::kable(caption = "Difference Chao1 richness between BODAC1 and BODAC2 before backwashing", digits = 3) %>%  kableExtra::kable_classic()
+
+# shannon pairwise
+alpha %>% 
+  filter(Protocol == "Fast_DNA",
+         Time == "Before") %>% 
+  with(., lm(Shannon ~ Filter_type)) %>% 
+  anova() %>% 
+  broom::tidy() %>% 
+  kableExtra::kable(caption = "Difference Shannon diversity between BODAC1 and BODAC2 before backwashing", digits = 3) %>%  kableExtra::kable_classic()
+
+
 ## Granule vs BW
-# Ch
-ao1 pairwise
+# Chao1 pairwise
 alpha %>% 
   filter(Protocol == "Fast_DNA") %>% 
   with(., lm(Chao1 ~ Sample_type)) %>% 
@@ -692,148 +711,7 @@ alpha %>%
   broom::tidy() %>% 
   kableExtra::kable(caption = "Difference Shannon diversity between granules and backwash water across BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
 
-### NOT RUN because of low power (n=3 per group including mixture sample)
-# ## Before vs After in Granules only
-# # Chao1 pairwise
-# alpha_time_chao1 <- 
-# alpha %>% 
-#   filter(Protocol == "Fast_DNA",
-#          Sample_type == "Granules") %>% 
-#   with(., lm(Chao1 ~ Time*Filter_type)) 
-# 
-# alpha_time_chao1 %>% 
-#   anova() %>% 
-#   broom::tidy() %>% 
-#   kableExtra::kable(caption = "Difference Chao1 richness between before and after backwashing of granules per BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
-# 
-# phia::testInteractions(alpha_time_chao1, fixed = "Filter_type", pairwise = "Time", adjustment = "fdr")
-# 
-# # shannon pairwise
-# alpha_time_shannon <-
-# alpha %>% 
-#   filter(Protocol == "Fast_DNA",
-#          Sample_type == "Granules") %>% 
-#   with(., lm(Shannon ~ Time*Filter_type)) 
-# 
-# alpha_time_shannon %>% 
-#   anova() %>% 
-#   broom::tidy() %>% 
-#   kableExtra::kable(caption = "Difference Shannon diversity between before and after backwashing of granules per BODAC 1 and 2", digits = 3) %>%  kableExtra::kable_classic()
-# 
-# phia::testInteractions(alpha_time_shannon, fixed = "Filter_type", pairwise = "Time", adjustment = "fdr")
 
-```
-
-```{r Breakaway, eval=F, echo=F, include=F}
-#### calculate alpha diversity using Breakaway and DivNet
-# follow: https://adw96.github.io/breakaway/articles/diversity-hypothesis-testing.html
-# https://adw96.github.io/breakaway/reference/index.html
-# divnet <-  divnet(tax_glom(psdata_OBER, "Genus"),
-#                           X = "combined",
-#                           ncores = 6) #the number of cores used to run  
-#  divnet
-#  divnet$shannon
-#  divnet_stats <- testDiversity(divnet, "shannon")
-# plot(divnet)
-# estimates <- divnet$shannon %>% summary %$% estimate
-# ses<- sqrt(divnet$`shannon-variance`)
-# X<-breakaway::make_design_matrix(psdata_OBER, variables = c("combined"))
-# betta(estimates, ses, X)$table
- 
-### Run Breakaway ### to estimate ASV richness
- 
-ba <- breakaway(psdata_OBER)
-ba_unf <- breakaway(psdata_OBER_unfiltered)
-
-# Plot estimates
-plot(ba, psdata_OBER, color = "combined")
-plot(ba_unf, psdata_OBER_unfiltered, color = "combined") # check if unfiltered data would yield higher uncertainty around estimates
-
-# Take the estimates and turn them into a data frame
-summary_df <- as.data.frame(summary(ba) %>% 
-  add_column("sampleID" = psdata_OBER %>% otu_table %>% sample_names) %>% 
-  add_column("combined" =  psdata_OBER %>% sample_data %>% .[,"combined"] %>% as.matrix(.) %>% .[,1] %>% unname(.)) %>% 
-  add_column("Protocol" =  psdata_OBER %>% sample_data %>% .[,"Protocol"] %>% as.matrix(.) %>% .[,1] %>% unname(.)))
-
-summary_df %>% 
-ggplot(aes(y = estimate, x = combined, color = combined, shape = Protocol)) + 
-  #geom_boxplot(aes(fill=NULL)) + 
-  geom_point(aes(group = Protocol), position = position_dodge(0.3)) +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-  ylab("Breakaway \nASV richness estimate")
- 
-# Let's test the hypothesis that different populations have the same microbial diversity
-# betta() works like a regression model but it accounts for the uncertainty in estimating diversity
-bt_prot <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Protocol"))
-bt_prot
-
-# Betta modelling (R2 = 0.13) of breakaway richness estimates indicates that CTAB DNA extraction increases richness across all samples compared with FastDNA Spin kit (94 species more; estimated total = 843 ASVs; p < 0.001).
-
-bt_ft <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Filter_type"))
-bt_ft
-
-bt <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Sample_type"))
-bt
-
-#bt <- betta(summary(ba)$estimate, summary(ba)$error, make_design_matrix(psdata_OBER, "Time"))
-#bt
-
-# Run betta on combined for each Protocol set separately
-psdata_OBER_CTAB <- prune_taxa(taxa_sums(subset_samples(psdata_OBER, Protocol == "CTAB_method")) > 0, subset_samples(psdata_OBER, Protocol == "CTAB_method"))
-psdata_OBER_FS <- prune_taxa(taxa_sums(subset_samples(psdata_OBER, Protocol == "Fast_DNA")) > 0, subset_samples(psdata_OBER, Protocol == "Fast_DNA"))
-
-psdata_OBER_FS <- prune_taxa(taxa_sums(subset_samples(psdata_OBER_FS, combined != "Polishing_filter-Granules-After"))>0, subset_samples(psdata_OBER_FS, combined != "Polishing_filter-Granules-After"))
-
-ba_CT <- breakaway(psdata_OBER_CTAB)
-ba_FS <- breakaway(psdata_OBER_FS)
-
-bt_CT <- betta(summary(ba_CT)$estimate, summary(ba_CT)$error, make_design_matrix(psdata_OBER_CTAB, "combined"))
-bt_CT
-bt_FS <- betta(summary(ba_FS)$estimate, summary(ba_FS)$error, make_design_matrix(psdata_OBER_FS, "combined"))
-bt_FS
-
-df_CT = bt_CT$table %>% 
-  as.data.frame() 
-  colnames(df_CT)[2] = "Standard_errors"
-  df_CT$group = rownames(df_CT)
-  df_CT$Protocol <- rep("CTAB_method", nrow(df_CT))
-df_CT <-  df_CT %>% 
-    mutate(pred = if_else(group != "(Intercept)", Estimates + Estimates[1], Estimates)) %>% 
-    mutate(group = if_else(group == "(Intercept)", "predictorsPolishing_filter-Granules-Before", group))
-           
-    
-df_FS = bt_FS$table %>% 
-  as.data.frame() 
-  colnames(df_FS)[2] = "Standard_errors"
-  df_FS$group = rownames(df_FS)
-  df_FS$Protocol <- rep("Fast_DNA", nrow(df_FS))
-df_FS <-  df_FS %>% 
-    mutate(pred = if_else(group != "(Intercept)", Estimates + Estimates[1], Estimates)) %>% 
-    mutate(group = if_else(group == "(Intercept)", "predictorsPolishing_filter-Granules-Before", group))
-
-df <- rbind(df_CT, df_FS)
-df %>%   
-  as_tibble() %>% 
-  mutate(group = factor(group)) %>% 
-  ggplot(aes(x=group, y=pred, group = Protocol)) +
-  geom_point(size = 2, aes(color=group, shape = Protocol), position = position_dodge(0.3)) +
-  geom_errorbar(aes(ymin=pred-1.96*Standard_errors, ymax = pred+1.96*Standard_errors, color = group), width = 0.1, position = position_dodge(0.3)) +
-  theme_classic() +
-  #theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
-  coord_flip() +
-  labs(y = "Breakaway predicted ASV richness")
-# Betta modelling (R2 = 0.13) of breakaway richness estimates indicates that CTAB DNA extraction increases richness across all samples compared with FastDNA Spin kit (94 species more; estimated total = 843 ASVs; p < 0.001).
-
-alpha_df_comp <- left_join(alpha, summary_df, by = "sampleID")
-
-  ggplot(alpha_df_comp, aes(x=Chao1, y=estimate)) +
-  geom_point(aes(color = combined.y)) +
-  geom_abline() +
-  theme_bw() 
- 
-cor.test(alpha_df_comp$estimate, alpha_df_comp$Chao1)
-# with abundance filtered data Chao1 and Breakaway total ASV richness estimates are similar. WIthout abundance filter, Chao1 underestimates AVS richness consistently and in a sample-type specific manner.
 ```
 
 ```{r total beta diversity rel_abund, message=F, echo=F, eval=F, warning=F, include=F, cache=F, fig.height=8, fig.width=4}

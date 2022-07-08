@@ -3,7 +3,11 @@
 .RData
 .Ruserdata
 
+# which folders to ignore
 *_cache/
 *_files/
-
 Prelim*
+raw_data
+
+# which files to ignore
+*.zip
